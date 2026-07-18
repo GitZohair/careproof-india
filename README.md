@@ -2,6 +2,10 @@
 
 Evidence-first healthcare facility intelligence for public-health and NGO planners in India.
 
+## Challenge category: Facility Trust Desk
+
+CareProof targets the **Facility Trust Desk** track: *“Can this facility actually do what it claims?”* We chose it because the source dataset contains thousands of useful but inconsistent facility descriptions, where a listed capability such as ICU or trauma care is not the same as verified proof. In plain language, CareProof turns those claims into an evidence traffic light, shows the source sentences behind each score, flags what is uncertain, and lets a planner record a human decision. It supports planning and verification; it does not recommend treatment to patients.
+
 **Live app:** [careproof-india-7474646705493946.aws.databricksapps.com](https://careproof-india-7474646705493946.aws.databricksapps.com)
 
 CareProof converts noisy facility listings into auditable capability profiles. It maps the evidence behind ICU, NICU, emergency, maternity, oncology, and trauma claims; exposes geographic coverage gaps; and preserves human review decisions.
@@ -19,6 +23,7 @@ The complete path is intentionally deterministic and auditable; it does not use 
 ## What the product does
 
 - Maps a representative national sample by evidence tier using corrected canonical coordinates.
+- Switches the same map to a location-confidence lens, separating data deserts from apparent care deserts.
 - Compares strong, moderate, weak, insufficient, and review-needed evidence.
 - Benchmarks evidence readiness across all six care capabilities.
 - Surfaces districts with the largest number of uncorroborated profiles.

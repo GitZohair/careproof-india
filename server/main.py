@@ -404,7 +404,8 @@ def _data_health() -> dict[str, Any]:
                  ROUND(100.0 * COUNT_IF(capacity IS NOT NULL) / COUNT(*), 1) AS capacity_coverage
           FROM {settings.facility_table}
         ), capability AS (
-          SELECT capability, COUNT_IF(claimed) AS claimed, COUNT_IF(facet_count>=2) AS supported
+          SELECT capability, COUNT_IF(claimed) AS claimed,
+                 COUNT_IF(claimed AND facet_count >= 2) AS supported
           FROM {settings.trust_table}
           GROUP BY capability
         )

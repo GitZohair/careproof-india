@@ -82,6 +82,24 @@ const TIER_COLORS: Record<TrustTier, string> = {
   NEEDS_REVIEW: "#bd5147",
 };
 
+type MapMode = "evidence" | "location";
+
+const LOCATION_LABELS: Record<string, string> = {
+  VERIFIED: "PIN verified",
+  PLAUSIBLE: "PIN plausible",
+  PIN_FALLBACK: "PIN corrected",
+  RAW_UNVERIFIED: "Raw only",
+  UNKNOWN: "Unknown",
+};
+
+const LOCATION_COLORS: Record<string, string> = {
+  VERIFIED: "#14766e",
+  PLAUSIBLE: "#356c86",
+  PIN_FALLBACK: "#c27b20",
+  RAW_UNVERIFIED: "#bd5147",
+  UNKNOWN: "#9ba7a2",
+};
+
 const geographyCollection = feature(
   world as never,
   (world as unknown as { objects: { countries: never } }).objects.countries,
@@ -378,7 +396,7 @@ function LandscapeView({ capability, state, capabilities, states, summary, facil
       <section className="landscape-grid">
         <article className="map-card">
           <CardHeading eyebrow="Geographic signal" title={`${capability} evidence across ${state === "ALL" ? "India" : state}`} icon={<Layers3 size={18} />} aside={`${points.length.toLocaleString()} mapped sample`} />
-          <IndiaSignalMap points={points} loading={loading} onSelect={onSelect} />
+          <IndiaSignalMap points={points} loading={loading} onSelect={onSelect} showLens />
         </article>
         <div className="insight-stack">
           <EvidenceDonut summary={summary} capability={capability} />
@@ -404,14 +422,17 @@ function CardHeading({ eyebrow, title, icon, aside }: { eyebrow: string; title: 
   return <div className="card-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div><div className="card-heading-aside">{aside && <span>{aside}</span>}{icon}</div></div>;
 }
 
-function IndiaSignalMap({ points, loading, onSelect, origin, highlighted = [] }: { points: MapPoint[]; loading?: boolean; onSelect: (id: string) => void; origin?: ResolvedLocation | null; highlighted?: string[] }) {
+function IndiaSignalMap({ points, loading, onSelect, origin, highlighted = [], showLens = false }: { points: MapPoint[]; loading?: boolean; onSelect: (id: string) => void; origin?: ResolvedLocation | null; highlighted?: string[]; showLens?: boolean }) {
   const projection = useMemo(() => geoMercator().center([82, 22]).scale(790).translate([400, 255]), []);
   const outline = INDIA_GEOGRAPHY ? geoPath(projection)(INDIA_GEOGRAPHY as never) : null;
   const highlightedIds = useMemo(() => new Set(highlighted), [highlighted]);
+  const [mode, setMode] = useState<MapMode>(() => showLens && new URLSearchParams(window.location.search).get("map") === "location" ? "location" : "evidence");
+  const locationLegend = ["VERIFIED", "PLAUSIBLE", "PIN_FALLBACK", "RAW_UNVERIFIED"];
   return (
     <div className="map-stage">
       {loading && <div className="map-loading"><span /><p>Mapping corrected coordinates…</p></div>}
-      <svg viewBox="0 0 800 520" role="img" aria-label="India map with healthcare facility evidence markers">
+      {showLens && <div className="map-lens" aria-label="Map lens"><span>Lens</span><button aria-pressed={mode === "evidence"} onClick={() => setMode("evidence")}>Evidence</button><button aria-pressed={mode === "location"} onClick={() => setMode("location")}>Location confidence</button></div>}
+      <svg viewBox="0 0 800 520" role="img" aria-label={`India map showing facility ${mode === "evidence" ? "evidence strength" : "coordinate confidence"}`}>
         <defs><radialGradient id="mapGlow"><stop offset="0" stopColor="#d9ebe5" stopOpacity=".9" /><stop offset="1" stopColor="#eef3ef" stopOpacity="0" /></radialGradient></defs>
         <circle cx="400" cy="255" r="310" fill="url(#mapGlow)" />
         {outline && <path d={outline} className="india-outline" />}
@@ -419,15 +440,16 @@ function IndiaSignalMap({ points, loading, onSelect, origin, highlighted = [] }:
           const projected = projection([point.longitude, point.latitude]);
           if (!projected) return null;
           const highlightedPoint = highlightedIds.has(point.facility_id);
-          return <circle key={point.facility_id} cx={projected[0]} cy={projected[1]} r={highlightedPoint ? 6 : point.tier === "STRONG" ? 3.6 : 2.5} fill={TIER_COLORS[point.tier]} fillOpacity={highlightedPoint ? 1 : .76} stroke={highlightedPoint ? "#fff" : "none"} strokeWidth={highlightedPoint ? 2.2 : 0} className="map-point" onClick={() => onSelect(point.facility_id)}><title>{point.name} · {point.evidence_strength}/100 · {TIER_LABEL[point.tier]}</title></circle>;
+          const locationLabel = LOCATION_LABELS[point.location_confidence] ?? "Unknown";
+          return <circle key={point.facility_id} cx={projected[0]} cy={projected[1]} r={highlightedPoint ? 6 : point.tier === "STRONG" ? 3.6 : 2.5} fill={mode === "location" ? LOCATION_COLORS[point.location_confidence] ?? LOCATION_COLORS.UNKNOWN : TIER_COLORS[point.tier]} fillOpacity={highlightedPoint ? 1 : .76} stroke={highlightedPoint ? "#fff" : "none"} strokeWidth={highlightedPoint ? 2.2 : 0} className="map-point" onClick={() => onSelect(point.facility_id)}><title>{point.name} · {mode === "location" ? locationLabel : `${point.evidence_strength}/100 · ${TIER_LABEL[point.tier]}`}</title></circle>;
         })}
         {origin && (() => {
           const projected = projection([origin.longitude, origin.latitude]);
           return projected ? <g className="origin-marker"><circle cx={projected[0]} cy={projected[1]} r="13" /><circle cx={projected[0]} cy={projected[1]} r="5" /></g> : null;
         })()}
       </svg>
-      <div className="map-legend">{(["STRONG", "MODERATE", "WEAK", "NEEDS_REVIEW", "INSUFFICIENT"] as TrustTier[]).map((item) => <span key={item}><i style={{ background: TIER_COLORS[item] }} />{TIER_LABEL[item]}</span>)}</div>
-      <p className="map-footnote"><Target size={13} /> PIN-conflicting coordinates use the PIN centroid; unknown locations are excluded.</p>
+      <div className="map-legend">{mode === "evidence" ? (["STRONG", "MODERATE", "WEAK", "NEEDS_REVIEW", "INSUFFICIENT"] as TrustTier[]).map((item) => <span key={item}><i style={{ background: TIER_COLORS[item] }} />{TIER_LABEL[item]}</span>) : locationLegend.map((item) => <span key={item}><i style={{ background: LOCATION_COLORS[item] }} />{LOCATION_LABELS[item]}</span>)}</div>
+      <p className="map-footnote"><Target size={13} /> {mode === "location" ? "Coordinate confidence is separate from care availability and capability evidence." : "PIN-conflicting coordinates use the PIN centroid; unknown locations are excluded."}</p>
     </div>
   );
 }
@@ -597,11 +619,11 @@ function DataHealthView() {
   if (health.isLoading) return <main className="subpage"><SkeletonRows /></main>;
   if (!health.data) return <main className="subpage"><div className="empty-state"><AlertTriangle /><h3>Health profile unavailable</h3></div></main>;
   const data = health.data;
-  return <main className="subpage"><PageLead eyebrow="Dataset health" title="Know the blind spots before making the map." badge="Shared catalog · live profile" /><section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state values" value={data.raw_state_values} tone="warning" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="Verified / plausible locations" value={`${data.verified_location_rate}%`} /></section><section className="health-layout"><article className="health-card"><CardHeading eyebrow="Completeness" title="Coverage by evidence field" icon={<Database size={19} />} /><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article><article className="health-card"><CardHeading eyebrow="Claim pressure" title="Claims versus corroboration" icon={<Hospital size={19} />} /><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" />Claimed</span><span><i className="supported" />Corroborated</span></div></article></section></main>;
+  return <main className="subpage"><PageLead eyebrow="Dataset health" title="Know the blind spots before making the map." badge="Shared catalog · live profile" /><section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state variants" value={data.raw_state_values} tone="warning" hint="before normalization" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="Verified / plausible locations" value={`${data.verified_location_rate}%`} /></section><section className="health-layout"><article className="health-card"><CardHeading eyebrow="Completeness" title="Coverage by evidence field" icon={<Database size={19} />} /><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article><article className="health-card"><CardHeading eyebrow="Claim pressure" title="Claims with multi-facet support" icon={<Hospital size={19} />} /><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" />Claimed</span><span><i className="supported" />Supported by 2+ facets</span></div></article></section></main>;
 }
 
 function MethodologyView() {
-  return <main className="subpage methodology"><PageLead eyebrow="Methodology" title="A score that can show its work." badge="Evidence strength · not hospital quality" /><section className="method-grid"><article><span>01</span><h2>Normalize</h2><p>Canonicalize geography through PIN data while retaining raw fields.</p></article><article><span>02</span><h2>Extract</h2><p>Find capability-specific statements, equipment, staff, procedures and capacity.</p></article><article><span>03</span><h2>Challenge</h2><p>Flag contamination, implausible numbers, contradictions and location mismatch.</p></article><article><span>04</span><h2>Remember</h2><p>Persist planner decisions with identity, note and scoring version.</p></article></section><section className="weight-card"><div><p className="eyebrow">Evidence model v1.0</p><h2>Transparent by construction</h2></div><div className="weight-list">{[["Direct facility statement",30],["Equipment",20],["Staff and specialty",20],["Capacity",10],["Procedures",10],["Source diversity",10]].map(([label,value]) => <div key={String(label)}><span>{label}</span><strong>{value} pts</strong></div>)}</div></section></main>;
+  return <main className="subpage methodology"><PageLead eyebrow="Methodology" title="A score that can show its work." badge="Evidence strength · not hospital quality" /><section className="method-grid"><article><span>01</span><h2>Normalize</h2><p>Canonicalize geography through PIN data while retaining raw fields.</p></article><article><span>02</span><h2>Extract</h2><p>Find capability-specific statements, equipment, staff, procedures and capacity.</p></article><article><span>03</span><h2>Challenge</h2><p>Flag contamination, implausible numbers, contradictions and location mismatch.</p></article><article><span>04</span><h2>Remember</h2><p>Persist planner decisions with identity, note and scoring version.</p></article></section><section className="weight-card"><div><p className="eyebrow">Evidence model v1.0</p><h2>Transparent by construction</h2></div><div className="weight-list">{[["Direct facility statement",30],["Equipment",20],["Staff and specialty",20],["Capacity",10],["Procedures",10],["Source diversity",10]].map(([label,value]) => <div key={String(label)}><span>{label}</span><strong>{value} pts</strong></div>)}</div></section><section className="tier-card"><div><p className="eyebrow">Decision guardrails</p><h2>Scores become tiers only with enough evidence facets.</h2></div><div className="tier-ladder"><span><i style={{ background: TIER_COLORS.STRONG }} /><strong>Strong</strong><small>75+ · 3 facets</small></span><span><i style={{ background: TIER_COLORS.MODERATE }} /><strong>Moderate</strong><small>50+ · 2 facets</small></span><span><i style={{ background: TIER_COLORS.WEAK }} /><strong>Weak</strong><small>25+ points</small></span><span><i style={{ background: TIER_COLORS.INSUFFICIENT }} /><strong>Insufficient</strong><small>Below 25</small></span></div><p><AlertTriangle size={15} /> Contextual-source risk always routes the profile to human review, regardless of score.</p></section></main>;
 }
 
 export default App;
