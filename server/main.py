@@ -26,6 +26,22 @@ CAPABILITIES = [
     {"code": "ONCOLOGY", "label": "Oncology"},
     {"code": "TRAUMA", "label": "Trauma"},
 ]
+CAPABILITY_CODES = {item["code"] for item in CAPABILITIES}
+TRUST_TIERS = {"ALL", "STRONG", "MODERATE", "WEAK", "INSUFFICIENT", "NEEDS_REVIEW"}
+
+
+def checked_capability(value: str) -> str:
+    capability = value.upper()
+    if capability not in CAPABILITY_CODES:
+        raise HTTPException(status_code=422, detail="Unsupported capability")
+    return capability
+
+
+def checked_tier(value: str) -> str:
+    tier = value.upper()
+    if tier not in TRUST_TIERS:
+        raise HTTPException(status_code=422, detail="Unsupported evidence tier")
+    return tier
 
 
 @app.get("/api/health")
@@ -46,6 +62,7 @@ def _filters_data() -> dict[str, Any]:
 
 @app.get("/api/summary")
 def summary(capability: str = "ICU", state: str = "ALL") -> dict[str, int]:
+    capability = checked_capability(capability)
     rows = _summary_data(capability, state)
     return {**rows, "reviewed": reviews.count()}
 
@@ -77,7 +94,7 @@ def facilities(
     tier: str = "ALL",
     q: str = Query(default="", max_length=100),
 ) -> list[dict[str, Any]]:
-    return _facility_rows(capability, state, tier, q.strip())
+    return _facility_rows(checked_capability(capability), state, checked_tier(tier), q.strip())
 
 
 @lru_cache(maxsize=256)
@@ -106,7 +123,7 @@ def _facility_rows(capability: str, state: str, tier: str, query: str) -> list[d
 
 @app.get("/api/map-points")
 def map_points(capability: str = "ICU", state: str = "ALL") -> list[dict[str, Any]]:
-    return _map_points(capability, state)
+    return _map_points(checked_capability(capability), state)
 
 
 @lru_cache(maxsize=128)
@@ -141,7 +158,7 @@ def _map_points(capability: str, state: str) -> list[dict[str, Any]]:
 
 @app.get("/api/regions")
 def regions(capability: str = "ICU", state: str = "ALL") -> list[dict[str, Any]]:
-    return _region_rows(capability, state)
+    return _region_rows(checked_capability(capability), state)
 
 
 @lru_cache(maxsize=128)
@@ -163,6 +180,33 @@ def _region_rows(capability: str, state: str) -> list[dict[str, Any]]:
         LIMIT 10
         """,
         {"capability": capability, "state": state},
+    )
+    return rows
+
+
+@app.get("/api/capability-benchmark")
+def capability_benchmark(state: str = "ALL") -> list[dict[str, Any]]:
+    return _capability_benchmark(state)
+
+
+@lru_cache(maxsize=32)
+def _capability_benchmark(state: str) -> list[dict[str, Any]]:
+    rows = warehouse.query(
+        f"""
+        SELECT capability,
+               COUNT(*) AS total,
+               COUNT_IF(tier IN ('STRONG','MODERATE')) AS defensible,
+               COUNT_IF(tier NOT IN ('STRONG','MODERATE')) AS evidence_gap,
+               ROUND(100.0 * COUNT_IF(tier IN ('STRONG','MODERATE')) / NULLIF(COUNT(*), 0), 1) AS defensible_share,
+               ROUND(AVG(evidence_strength), 1) AS mean_score
+        FROM {settings.trust_table}
+        WHERE (:state='ALL' OR canonical_state=:state)
+        GROUP BY capability
+        ORDER BY CASE capability
+          WHEN 'ICU' THEN 1 WHEN 'NICU' THEN 2 WHEN 'EMERGENCY' THEN 3
+          WHEN 'MATERNITY' THEN 4 WHEN 'ONCOLOGY' THEN 5 ELSE 6 END
+        """,
+        {"state": state},
     )
     return rows
 
@@ -215,6 +259,7 @@ def nearest_facilities(
     latitude: float = Query(ge=6, le=38.6),
     longitude: float = Query(ge=68, le=98),
 ) -> list[dict[str, Any]]:
+    capability = checked_capability(capability)
     rows = warehouse.query(
         f"""
         WITH distances AS (
@@ -249,6 +294,7 @@ def nearest_facilities(
 
 @app.get("/api/facilities/{facility_id}")
 def facility_detail(facility_id: str, capability: str = "ICU") -> dict[str, Any]:
+    capability = checked_capability(capability)
     row = dict(_facility_detail_data(facility_id, capability))
     row["last_review"] = reviews.latest(facility_id, capability)
     return row
@@ -310,6 +356,7 @@ def _evidence_gaps(row: dict[str, Any]) -> list[str]:
 
 @app.post("/api/reviews", status_code=201)
 def create_review(payload: ReviewCreate, request: Request) -> dict[str, Any]:
+    checked_capability(payload.capability)
     reviewer = request.headers.get("x-forwarded-email") or request.headers.get("x-forwarded-preferred-username") or "local-reviewer"
     return reviews.create({**payload.model_dump(), "reviewer_email": reviewer})
 
@@ -321,27 +368,45 @@ def data_health() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _data_health() -> dict[str, Any]:
-    capability_rows = warehouse.query(
+    rows = warehouse.query(
         f"""
-        SELECT capability, COUNT_IF(claimed) claimed, COUNT_IF(facet_count>=2) supported
-        FROM {settings.trust_table}
-        GROUP BY capability ORDER BY capability
+        WITH profile AS (
+          SELECT COUNT(*) AS unique_facilities,
+                 COUNT(DISTINCT raw_state) AS raw_state_values,
+                 COUNT_IF(ARRAY_CONTAINS(quality_flags, 'COORDINATE_PIN_CONFLICT')) AS coordinate_conflicts,
+                 ROUND(100.0 * COUNT_IF(pin_latitude IS NOT NULL) / COUNT(*), 1) AS pin_join_rate,
+                 ROUND(100.0 * COUNT_IF(location_confidence IN ('VERIFIED','PLAUSIBLE')) / COUNT(*), 1) AS verified_location_rate,
+                 ROUND(100.0 * COUNT_IF(NULLIF(TRIM(description), '') IS NOT NULL) / COUNT(*), 1) AS description_coverage,
+                 ROUND(100.0 * COUNT_IF(SIZE(capability_items) > 0) / COUNT(*), 1) AS capability_coverage,
+                 ROUND(100.0 * COUNT_IF(SIZE(procedure_items) > 0) / COUNT(*), 1) AS procedure_coverage,
+                 ROUND(100.0 * COUNT_IF(SIZE(equipment_items) > 0) / COUNT(*), 1) AS equipment_coverage,
+                 ROUND(100.0 * COUNT_IF(number_doctors IS NOT NULL) / COUNT(*), 1) AS doctor_coverage,
+                 ROUND(100.0 * COUNT_IF(capacity IS NOT NULL) / COUNT(*), 1) AS capacity_coverage
+          FROM {settings.facility_table}
+        ), capability AS (
+          SELECT capability, COUNT_IF(claimed) AS claimed, COUNT_IF(facet_count>=2) AS supported
+          FROM {settings.trust_table}
+          GROUP BY capability
+        )
+        SELECT c.*, p.* FROM capability c CROSS JOIN profile p ORDER BY c.capability
         """
     )
+    profile = rows[0]
+    capability_rows = [{"capability": row["capability"], "claimed": row["claimed"], "supported": row["supported"]} for row in rows]
     return {
         "total_records": 10088,
-        "unique_facilities": 10077,
-        "raw_state_values": 254,
-        "coordinate_conflicts": 1354,
-        "pin_join_rate": 94.8,
-        "nfhs_join_rate": 61.9,
+        "unique_facilities": int(profile["unique_facilities"] or 0),
+        "raw_state_values": int(profile["raw_state_values"] or 0),
+        "coordinate_conflicts": int(profile["coordinate_conflicts"] or 0),
+        "pin_join_rate": float(profile["pin_join_rate"] or 0),
+        "verified_location_rate": float(profile["verified_location_rate"] or 0),
         "coverage": [
-            {"field": "Description", "value": 99.2},
-            {"field": "Capability", "value": 98.6},
-            {"field": "Procedure", "value": 91.4},
-            {"field": "Equipment", "value": 76.2},
-            {"field": "Doctor count", "value": 36.0},
-            {"field": "Capacity", "value": 25.0},
+            {"field": "Description", "value": float(profile["description_coverage"] or 0)},
+            {"field": "Capability", "value": float(profile["capability_coverage"] or 0)},
+            {"field": "Procedure", "value": float(profile["procedure_coverage"] or 0)},
+            {"field": "Equipment", "value": float(profile["equipment_coverage"] or 0)},
+            {"field": "Doctor count", "value": float(profile["doctor_coverage"] or 0)},
+            {"field": "Capacity", "value": float(profile["capacity_coverage"] or 0)},
         ],
         "capability_evidence": capability_rows,
     }

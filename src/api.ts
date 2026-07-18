@@ -1,4 +1,4 @@
-import type { DataHealth, FacilityDetail, FacilitySummary, Filters, MapPoint, NearestFacility, RegionSummary, ResolvedLocation, ReviewDecision, Summary } from "./types";
+import type { CapabilityBenchmark, DataHealth, FacilityDetail, FacilitySummary, Filters, MapPoint, NearestFacility, RegionSummary, ResolvedLocation, ReviewDecision, Summary } from "./types";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -27,6 +27,8 @@ export const api = {
     request<MapPoint[]>(`/api/map-points?capability=${encodeURIComponent(capability)}&state=${encodeURIComponent(state)}`),
   regions: (capability: string, state: string) =>
     request<RegionSummary[]>(`/api/regions?capability=${encodeURIComponent(capability)}&state=${encodeURIComponent(state)}`),
+  capabilityBenchmark: (state: string) =>
+    request<CapabilityBenchmark[]>(`/api/capability-benchmark?state=${encodeURIComponent(state)}`),
   resolveLocation: (query: string) =>
     request<ResolvedLocation>(`/api/resolve-location?q=${encodeURIComponent(query)}`),
   nearest: (capability: string, latitude: number, longitude: number) =>

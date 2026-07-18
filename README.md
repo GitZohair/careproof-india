@@ -6,16 +6,31 @@ Evidence-first healthcare facility intelligence for public-health and NGO planne
 
 CareProof converts noisy facility listings into auditable capability profiles. It maps the evidence behind ICU, NICU, emergency, maternity, oncology, and trauma claims; exposes geographic coverage gaps; and preserves human review decisions.
 
+## Judge quick start
+
+1. Open the live app and choose **60-sec demo**.
+2. Run the prebuilt **Jaipur scenario**.
+3. Compare the nearest facility with the best-evidenced option within 25 km.
+4. Open a dossier to inspect score components, sentence receipts, gaps, and source links.
+5. Visit **Data health** to see live-derived quality metrics, then **Method** for the transparent scoring model.
+
+The complete path is intentionally deterministic and auditable; it does not use a language model to invent a facility recommendation.
+
 ## What the product does
 
 - Maps a representative national sample by evidence tier using corrected canonical coordinates.
 - Compares strong, moderate, weak, insufficient, and review-needed evidence.
-- Surfaces districts with the lowest reliable-evidence share.
+- Benchmarks evidence readiness across all six care capabilities.
+- Surfaces districts with the largest number of uncorroborated profiles.
 - Finds the nearest evidenced capability claims from a city, district, PIN, or browser location.
 - Opens a facility dossier with score components, sentence-level receipts, flags, gaps, and sources.
 - Saves planner decisions to Databricks Lakebase.
 
 The access finder is planning intelligence—not patient referral advice. Distance does not establish clinical suitability, current capacity, or availability.
+
+## Why this is different
+
+Most directories answer “does this facility claim ICU?” CareProof asks “what visible evidence supports that claim, how geographically trustworthy is the record, and what should a planner verify next?” It keeps distance, evidence strength, and clinical suitability separate instead of collapsing them into a misleading hospital ranking.
 
 ## Architecture
 
@@ -74,3 +89,7 @@ Table names and resource bindings are configured in [`app.yaml`](app.yaml). Buil
 ## Data scale
 
 The current trust layer contains 10,077 canonical facilities, 26,174 capability profiles, 75,651 evidence receipts, and 2,821 regional aggregates.
+
+## License
+
+[MIT](LICENSE)

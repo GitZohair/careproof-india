@@ -58,6 +58,15 @@ export interface RegionSummary {
   reliable_share: number;
 }
 
+export interface CapabilityBenchmark {
+  capability: string;
+  total: number;
+  defensible: number;
+  evidence_gap: number;
+  defensible_share: number;
+  mean_score: number;
+}
+
 export interface ResolvedLocation {
   label: string;
   state: string | null;
@@ -118,7 +127,7 @@ export interface DataHealth {
   raw_state_values: number;
   coordinate_conflicts: number;
   pin_join_rate: number;
-  nfhs_join_rate: number;
+  verified_location_rate: number;
   coverage: { field: string; value: number }[];
   capability_evidence: { capability: string; claimed: number; supported: number }[];
 }

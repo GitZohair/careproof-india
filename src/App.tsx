@@ -1,10 +1,11 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { geoMercator, geoPath } from "d3-geo";
 import { feature } from "topojson-client";
 import world from "world-atlas/countries-110m.json";
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   BarChart3,
   Check,
@@ -20,10 +21,14 @@ import {
   LocateFixed,
   MapPin,
   Navigation,
+  Play,
   Route,
+  ScanSearch,
   Search,
   ShieldCheck,
+  Sparkles,
   Target,
+  Workflow,
   X,
 } from "lucide-react";
 import {
@@ -40,6 +45,7 @@ import {
 } from "recharts";
 import { api } from "./api";
 import type {
+  CapabilityBenchmark,
   FacilitySummary,
   MapPoint,
   NearestFacility,
@@ -107,6 +113,20 @@ function SkeletonRows() {
   return <div className="skeleton-list">{[0, 1, 2, 3, 4].map((item) => <div className="skeleton-row" key={item}><i /><div><b /><span /></div><em /></div>)}</div>;
 }
 
+function useDebouncedValue<T>(value: T, delay: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
+
+function introWasDismissed() {
+  try { return window.localStorage.getItem("careproof-intro-dismissed") === "1"; }
+  catch { return false; }
+}
+
 function App() {
   const [view, setView] = useState<View>(() => {
     const requested = new URLSearchParams(window.location.search).get("view");
@@ -119,6 +139,10 @@ function App() {
   const [tier, setTier] = useState("ALL");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [demoOpen, setDemoOpen] = useState(() => new URLSearchParams(window.location.search).get("tour") === "1");
+  const [introVisible, setIntroVisible] = useState(() => !introWasDismissed());
+  const [demoPlace, setDemoPlace] = useState<string | null>(null);
+  const debouncedQuery = useDebouncedValue(query, 350);
 
   const filters = useQuery({ queryKey: ["filters"], queryFn: api.filters });
   const summary = useQuery({
@@ -127,8 +151,8 @@ function App() {
     enabled: view === "landscape" || view === "review",
   });
   const facilities = useQuery({
-    queryKey: ["facilities", capability, state, tier, query],
-    queryFn: () => api.facilities(capability, state, tier, query),
+    queryKey: ["facilities", capability, state, tier, debouncedQuery],
+    queryFn: () => api.facilities(capability, state, tier, debouncedQuery),
     enabled: view === "landscape" || view === "review",
   });
   const mapPoints = useQuery({
@@ -141,6 +165,11 @@ function App() {
     queryFn: () => api.regions(capability, state),
     enabled: view === "landscape",
   });
+  const benchmark = useQuery({
+    queryKey: ["capability-benchmark", state],
+    queryFn: () => api.capabilityBenchmark(state),
+    enabled: view === "landscape",
+  });
   const detail = useQuery({
     queryKey: ["facility", selectedId, capability],
     queryFn: () => api.detail(selectedId!, capability),
@@ -149,28 +178,66 @@ function App() {
 
   const capabilities = filters.data?.capabilities ?? FALLBACK_CAPABILITIES;
   const states = filters.data?.states ?? [];
+  const coreError = filters.isError || (view === "landscape" && (summary.isError || mapPoints.isError || regions.isError || benchmark.isError));
 
   const updateCapability = (next: string) => {
     setCapability(next);
     setSelectedId(null);
   };
 
+  const navigate = (next: View) => {
+    setView(next);
+    setSelectedId(null);
+    const url = new URL(window.location.href);
+    if (next === "landscape") url.searchParams.delete("view");
+    else url.searchParams.set("view", next);
+    window.history.pushState({ view: next }, "", url);
+    window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  };
+
+  useEffect(() => {
+    const onPopState = () => {
+      const requested = new URLSearchParams(window.location.search).get("view");
+      setView((["access", "review", "health", "methodology"] as View[]).includes(requested as View) ? requested as View : "landscape");
+      setSelectedId(null);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const dismissIntro = () => {
+    setIntroVisible(false);
+    try { window.localStorage.setItem("careproof-intro-dismissed", "1"); } catch { /* private browsing */ }
+  };
+
+  const runGuidedDemo = () => {
+    dismissIntro();
+    setDemoOpen(false);
+    setCapability("ICU");
+    setState("ALL");
+    setDemoPlace("Jaipur");
+    navigate("access");
+  };
+
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="brand" onClick={() => setView("landscape")} aria-label="CareProof home">
+        <button className="brand" onClick={() => navigate("landscape")} aria-label="CareProof home">
           <span className="brand-mark"><ShieldCheck size={19} /></span>
           <span><strong>CareProof</strong><small>India</small></span>
         </button>
         <nav aria-label="Primary navigation">
-          <button className={view === "landscape" ? "active" : ""} onClick={() => setView("landscape")}>Landscape</button>
-          <button className={view === "access" ? "active" : ""} onClick={() => setView("access")}>Access finder</button>
-          <button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>Review queue</button>
-          <button className={view === "health" ? "active" : ""} onClick={() => setView("health")}>Data health</button>
-          <button className={view === "methodology" ? "active" : ""} onClick={() => setView("methodology")}>Method</button>
+          <button className={view === "landscape" ? "active" : ""} onClick={() => navigate("landscape")}>Landscape</button>
+          <button className={view === "access" ? "active" : ""} onClick={() => navigate("access")}>Access finder</button>
+          <button className={view === "review" ? "active" : ""} onClick={() => navigate("review")}>Review queue</button>
+          <button className={view === "health" ? "active" : ""} onClick={() => navigate("health")}>Data health</button>
+          <button className={view === "methodology" ? "active" : ""} onClick={() => navigate("methodology")}>Method</button>
         </nav>
-        <div className="topbar-context"><span className="live-dot" /> Live Databricks data</div>
+        <div className="topbar-actions"><button className="demo-button" onClick={() => setDemoOpen(true)}><Play size={13} fill="currentColor" /> 60-sec demo</button><div className="topbar-context"><span className="live-dot" /> Live data</div></div>
       </header>
+
+      {introVisible && <IntroRibbon onOpen={() => setDemoOpen(true)} onDismiss={dismissIntro} />}
+      {coreError && <div className="service-banner" role="alert"><AlertTriangle size={15} /><span>One or more live catalog views did not load.</span><button onClick={() => window.location.reload()}>Retry connection</button></div>}
 
       {view === "landscape" && (
         <LandscapeView
@@ -181,12 +248,13 @@ function App() {
           summary={summary.data}
           facilities={facilities.data ?? []}
           points={mapPoints.data ?? []}
+          benchmark={benchmark.data ?? []}
           regionRows={regions.data ?? []}
           loading={mapPoints.isLoading || summary.isLoading}
           onCapability={updateCapability}
           onState={(next) => { setState(next); setSelectedId(null); }}
           onSelect={setSelectedId}
-          onOpenQueue={() => setView("review")}
+          onOpenQueue={() => navigate("review")}
         />
       )}
 
@@ -197,6 +265,8 @@ function App() {
           capabilities={capabilities}
           states={states}
           points={mapPoints.data ?? []}
+          initialPlace={demoPlace}
+          onInitialPlaceUsed={() => setDemoPlace(null)}
           onCapability={updateCapability}
           onState={(next) => { setState(next); setSelectedId(null); }}
           onSelect={setSelectedId}
@@ -235,6 +305,7 @@ function App() {
           onReviewed={() => { detail.refetch(); summary.refetch(); facilities.refetch(); }}
         />
       )}
+      {demoOpen && <JudgeGuide onClose={() => setDemoOpen(false)} onRun={runGuidedDemo} />}
     </div>
   );
 }
@@ -269,10 +340,24 @@ function PageLead({ eyebrow, title, badge }: { eyebrow: string; title: string; b
   );
 }
 
-function LandscapeView({ capability, state, capabilities, states, summary, facilities, points, regionRows, loading, onCapability, onState, onSelect, onOpenQueue }: ControlProps & {
+function IntroRibbon({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
+  return <aside className="intro-ribbon"><div><Sparkles size={15} /><strong>New to CareProof?</strong><span>Trace one planning decision from national gap to source receipt.</span></div><button onClick={onOpen}>Start the 60-sec tour <ArrowRight size={14} /></button><button className="intro-dismiss" onClick={onDismiss} aria-label="Dismiss introduction"><X size={14} /></button></aside>;
+}
+
+function JudgeGuide({ onClose, onRun }: { onClose: () => void; onRun: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return <div className="guide-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="judge-guide" role="dialog" aria-modal="true" aria-labelledby="guide-title"><button className="guide-close" onClick={onClose} aria-label="Close guided tour"><X size={18} /></button><div className="guide-hero"><p className="eyebrow">Judge's 60-second path</p><h2 id="guide-title">From 10,077 listings to one auditable action.</h2><p>CareProof does not guess which hospital is “best.” It shows planners where claims are weak, what evidence exists, and what must be verified next.</p></div><div className="guide-flow"><article><span>01</span><div className="guide-icon"><Layers3 size={21} /></div><h3>See the gap</h3><p>Compare six capabilities and locate districts with the largest evidence deficit.</p></article><i><ArrowRight size={18} /></i><article><span>02</span><div className="guide-icon"><ScanSearch size={21} /></div><h3>Test access</h3><p>Search any city or PIN, then compare distance without hiding evidence quality.</p></article><i><ArrowRight size={18} /></i><article><span>03</span><div className="guide-icon"><FileCheck2 size={21} /></div><h3>Open the proof</h3><p>Inspect sentence receipts, known gaps, flags, and the persistent review trail.</p></article></div><div className="guide-stats"><div><strong>75,651</strong><span>evidence receipts</span></div><div><strong>26,174</strong><span>capability profiles</span></div><div><strong>6</strong><span>care capabilities</span></div></div><div className="guide-actions"><button onClick={onClose}>Explore myself</button><button className="primary" onClick={onRun}><Play size={14} fill="currentColor" /> Run the Jaipur scenario</button></div></section></div>;
+}
+
+function LandscapeView({ capability, state, capabilities, states, summary, facilities, points, benchmark, regionRows, loading, onCapability, onState, onSelect, onOpenQueue }: ControlProps & {
   summary?: Summary;
   facilities: FacilitySummary[];
   points: MapPoint[];
+  benchmark: CapabilityBenchmark[];
   regionRows: Awaited<ReturnType<typeof api.regions>>;
   loading: boolean;
   onSelect: (id: string) => void;
@@ -301,12 +386,18 @@ function LandscapeView({ capability, state, capabilities, states, summary, facil
         </div>
       </section>
 
+      <CapabilityBenchmarkView rows={benchmark} active={capability} onSelect={onCapability} />
+
       <section className="priority-strip">
         <div className="priority-heading"><div><p className="eyebrow">Evidence leaders</p><h2>Facilities worth inspecting first</h2></div><button onClick={onOpenQueue}>Open full queue <ArrowUpRight size={15} /></button></div>
         <div className="facility-card-grid">{priority.map((facility, index) => <FacilityCard facility={facility} rank={index + 1} key={facility.facility_id} onSelect={() => onSelect(facility.facility_id)} />)}</div>
       </section>
     </main>
   );
+}
+
+function CapabilityBenchmarkView({ rows, active, onSelect }: { rows: CapabilityBenchmark[]; active: string; onSelect: (capability: string) => void }) {
+  return <section className="benchmark-card"><div className="benchmark-heading"><div><p className="eyebrow">Capability benchmark</p><h2>Where evidence is decision-ready</h2></div><p><Workflow size={14} /> Strong + moderate profiles, compared consistently</p></div>{rows.length === 0 ? <div className="benchmark-skeleton">{FALLBACK_CAPABILITIES.map((item) => <i key={item.code} />)}</div> : <div className="benchmark-grid">{rows.map((row) => <button key={row.capability} className={active === row.capability ? "active" : ""} onClick={() => onSelect(row.capability)}><div><strong>{row.capability}</strong><span>{row.defensible_share}%</span></div><div className="benchmark-track"><i style={{ width: `${row.defensible_share}%` }} /></div><small>{row.defensible.toLocaleString()} defensible · {row.evidence_gap.toLocaleString()} gaps</small></button>)}</div>}</section>;
 }
 
 function CardHeading({ eyebrow, title, icon, aside }: { eyebrow: string; title: string; icon: ReactNode; aside?: string }) {
@@ -376,10 +467,11 @@ function FacilityCard({ facility, rank, onSelect }: { facility: FacilitySummary;
   return <button className="facility-card" onClick={onSelect}><div className="facility-card-top"><span>{String(rank).padStart(2, "0")}</span><TierBadge tier={facility.tier} /></div><h3>{facility.name}</h3><p><MapPin size={12} />{[facility.city, facility.state].filter(Boolean).join(", ")}</p><div className="facility-card-score"><strong>{facility.evidence_strength}</strong><span>/100</span><small>{facility.facet_count} facets · {facility.source_domain_count} domains</small></div></button>;
 }
 
-function AccessFinder({ capability, state, capabilities, states, points, onCapability, onState, onSelect }: ControlProps & { points: MapPoint[]; onSelect: (id: string) => void }) {
+function AccessFinder({ capability, state, capabilities, states, points, initialPlace, onInitialPlaceUsed, onCapability, onState, onSelect }: ControlProps & { points: MapPoint[]; initialPlace?: string | null; onInitialPlaceUsed: () => void; onSelect: (id: string) => void }) {
   const [locationQuery, setLocationQuery] = useState("");
   const [origin, setOrigin] = useState<ResolvedLocation | null>(null);
   const [locationError, setLocationError] = useState("");
+  const handledInitial = useRef<string | null>(null);
   const resolver = useMutation({
     mutationFn: api.resolveLocation,
     onSuccess: (location) => { setOrigin(location); setLocationError(""); if (location.state) onState(location.state); },
@@ -390,7 +482,18 @@ function AccessFinder({ capability, state, capabilities, states, points, onCapab
     queryFn: () => api.nearest(capability, origin!.latitude, origin!.longitude),
     enabled: Boolean(origin),
   });
-  const nearestPoints = (nearest.data ?? []).filter((item) => item.latitude != null && item.longitude != null);
+  useEffect(() => {
+    if (initialPlace && handledInitial.current !== initialPlace) {
+      handledInitial.current = initialPlace;
+      setLocationQuery(initialPlace);
+      resolver.mutate(initialPlace);
+      onInitialPlaceUsed();
+    }
+  }, [initialPlace, onInitialPlaceUsed, resolver]);
+  const nearestPoints = useMemo(() => (nearest.data ?? []).filter((item) => item.latitude != null && item.longitude != null), [nearest.data]);
+  const bestEvidencedNearby = useMemo(() => (nearest.data ?? [])
+    .filter((item) => item.distance_km <= 25 && (item.tier === "STRONG" || item.tier === "MODERATE"))
+    .sort((left, right) => right.evidence_strength - left.evidence_strength || left.distance_km - right.distance_km)[0]?.facility_id ?? null, [nearest.data]);
   const mapData = useMemo(() => {
     const merged = new Map(points.map((item) => [item.facility_id, item]));
     nearestPoints.forEach((item) => merged.set(item.facility_id, item as MapPoint));
@@ -407,14 +510,20 @@ function AccessFinder({ capability, state, capabilities, states, points, onCapab
     );
   };
 
+  const resolvePlace = (place: string) => {
+    setLocationQuery(place);
+    resolver.mutate(place);
+  };
+
   return (
     <main className="dashboard-page">
       <PageLead eyebrow="Geographic access finder" title={`Find the nearest evidenced ${capability} claims.`} badge="Distance + evidence · no live availability" />
       <PlannerControls {...{ capability, state, capabilities, states, onCapability, onState }} />
       <section className="locator-card">
         <div><p className="eyebrow">Set an origin</p><h2>City, district or 6-digit PIN</h2></div>
-        <div className="locator-input"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && locationQuery.trim().length >= 2) resolver.mutate(locationQuery.trim()); }} placeholder="Try Jaipur or 302001" /><button disabled={locationQuery.trim().length < 2 || resolver.isPending} onClick={() => resolver.mutate(locationQuery.trim())}>{resolver.isPending ? "Locating…" : "Find"}</button></div>
+        <div className="locator-input"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && locationQuery.trim().length >= 2) resolver.mutate(locationQuery.trim()); }} placeholder="Try Jaipur or 302001" aria-label="City, district or PIN" /><button disabled={locationQuery.trim().length < 2 || resolver.isPending} onClick={() => resolver.mutate(locationQuery.trim())}>{resolver.isPending ? "Locating…" : "Find"}</button></div>
         <button className="location-button" onClick={useMyLocation}><LocateFixed size={16} /> Use my location</button>
+        <div className="location-presets"><span>Quick scenarios</span>{["Jaipur", "Pune", "Lucknow"].map((place) => <button key={place} onClick={() => resolvePlace(place)} disabled={resolver.isPending}>{place}</button>)}</div>
         {origin && <div className="origin-chip"><Navigation size={14} /><span><strong>{origin.label}</strong>{[origin.district, origin.state].filter(Boolean).join(", ") && ` · ${[origin.district, origin.state].filter(Boolean).join(", ")}`}</span></div>}
         {locationError && <p className="locator-error">{locationError}</p>}
       </section>
@@ -422,7 +531,7 @@ function AccessFinder({ capability, state, capabilities, states, points, onCapab
         <article className="map-card access-map"><CardHeading eyebrow="Access radius" title={origin ? `From ${origin.label}` : "Choose an origin to rank distance"} icon={<Compass size={18} />} aside={`${nearestPoints.length} nearest shown`} /><IndiaSignalMap points={mapData} origin={origin} highlighted={nearestPoints.map((item) => item.facility_id)} onSelect={onSelect} /></article>
         <article className="nearest-panel">
           <CardHeading eyebrow="Nearest claims" title={`${capability} facilities`} icon={<Navigation size={18} />} />
-          {!origin ? <div className="nearest-empty"><MapPin size={25} /><h3>Start with a place</h3><p>We rank corrected coordinates by distance, then show the evidence tier beside each result.</p></div> : nearest.isLoading ? <SkeletonRows /> : <div className="nearest-list">{nearest.data?.map((facility, index) => <NearestRow facility={facility} rank={index + 1} key={facility.facility_id} onSelect={() => onSelect(facility.facility_id)} />)}</div>}
+          {!origin ? <div className="nearest-empty"><MapPin size={25} /><h3>Start with a place</h3><p>We rank corrected coordinates by distance, then show the evidence tier beside each result.</p></div> : nearest.isLoading ? <SkeletonRows /> : <div className="nearest-list">{nearest.data?.map((facility, index) => <NearestRow facility={facility} rank={index + 1} tag={facility.facility_id === bestEvidencedNearby ? "Best evidence ≤25 km" : index === 0 ? "Nearest" : undefined} key={facility.facility_id} onSelect={() => onSelect(facility.facility_id)} />)}</div>}
           <div className="access-warning"><AlertTriangle size={15} /><span>Nearest does not mean clinically suitable or currently available. Verify before programme referral.</span></div>
         </article>
       </section>
@@ -430,8 +539,8 @@ function AccessFinder({ capability, state, capabilities, states, points, onCapab
   );
 }
 
-function NearestRow({ facility, rank, onSelect }: { facility: NearestFacility; rank: number; onSelect: () => void }) {
-  return <button className="nearest-row" onClick={onSelect}><span className="nearest-rank">{rank}</span><div><strong>{facility.name}</strong><p>{[facility.city, facility.state].filter(Boolean).join(", ")}</p><TierBadge tier={facility.tier} /></div><div className="nearest-distance"><strong>{facility.distance_km}</strong><span>km</span><small>{facility.evidence_strength}/100</small></div><ChevronRight size={16} /></button>;
+function NearestRow({ facility, rank, tag, onSelect }: { facility: NearestFacility; rank: number; tag?: string; onSelect: () => void }) {
+  return <button className="nearest-row" onClick={onSelect}><span className="nearest-rank">{rank}</span><div>{tag && <span className="nearest-tag">{tag}</span>}<strong>{facility.name}</strong><p>{[facility.city, facility.state].filter(Boolean).join(", ")}</p><TierBadge tier={facility.tier} /></div><div className="nearest-distance"><strong>{facility.distance_km}</strong><span>km</span><small>{facility.evidence_strength}/100</small></div><ChevronRight size={16} /></button>;
 }
 
 function ReviewQueue({ capability, state, tier, query, capabilities, states, summary, facilities, loading, error, onCapability, onState, onTier, onQuery, onSelect, onRetry }: ControlProps & {
@@ -466,6 +575,11 @@ function FacilityRow({ facility, rank, onSelect }: { facility: FacilitySummary; 
 
 function DetailPanel({ detail, loading, onClose, onReviewed }: { detail: Awaited<ReturnType<typeof api.detail>> | undefined; loading: boolean; onClose: () => void; onReviewed: () => void }) {
   const [reviewOpen, setReviewOpen] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
   return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="detail-drawer"><button className="drawer-close" onClick={onClose} aria-label="Close dossier"><X size={19} /></button>{loading || !detail ? <div className="drawer-loading"><span /><span /><span /></div> : <><div className="dossier-header"><p className="eyebrow">Evidence dossier · {detail.capability}</p><h2>{detail.name}</h2><p><MapPin size={14} />{[detail.city, detail.district, detail.state, detail.pincode].filter(Boolean).join(", ")}</p><div className="dossier-verdict"><TierBadge tier={detail.tier} /><strong>{detail.evidence_strength}<small>/100</small></strong></div><p className="verdict-copy">Visible evidence strength—not accreditation, availability or clinical quality.</p></div><section className="dossier-section"><div className="section-title"><h3>Why this score</h3><span>model v1.0</span></div><div className="component-grid">{[["Direct statement", detail.component_direct, 30],["Equipment", detail.component_equipment, 20],["Staff & specialty", detail.component_staff, 20],["Capacity", detail.component_capacity, 10],["Procedures", detail.component_procedure, 10],["Source diversity", detail.component_sources, 10]].map(([label, value, max]) => <div className="component" key={String(label)}><span>{label}</span><div><i style={{ width: `${(Number(value) / Number(max)) * 100}%` }} /></div><b>{value}/{max}</b></div>)}</div></section>{detail.flags.length > 0 && <section className="dossier-section flags-section"><div className="section-title"><h3>Verification flags</h3><span>{detail.flags.length}</span></div>{detail.flags.map((flag) => <div className="quality-flag" key={flag}><AlertTriangle size={16} /><span>{flag.replaceAll("_", " ")}</span></div>)}</section>}<section className="dossier-section"><div className="section-title"><h3>Evidence receipts</h3><span>{detail.evidence.length} excerpts</span></div><div className="receipt-list">{detail.evidence.length === 0 ? <p className="muted">No supporting excerpt was found outside the capability claim.</p> : detail.evidence.map((receipt, index) => <article className="receipt" key={`${receipt.source_field}-${index}`}><div><FileCheck2 size={15} /><strong>{receipt.evidence_type}</strong><span>{receipt.source_field}</span></div><blockquote>“{receipt.quote}”</blockquote></article>)}</div></section><section className="dossier-section"><div className="section-title"><h3>Known gaps</h3><span>Honest uncertainty</span></div><ul className="gap-list">{detail.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></section><section className="dossier-section"><div className="section-title"><h3>Source trail</h3><span>{detail.source_domain_count} domains</span></div><div className="source-list">{detail.source_urls.slice(0, 5).map((url, index) => <a href={url} target="_blank" rel="noreferrer" key={`${url}-${index}`}>{sourceHost(url)}<ArrowUpRight size={13} /></a>)}</div></section>{detail.last_review && <div className="prior-review"><Check size={15} /><span>Last reviewed: <strong>{detail.last_review.decision}</strong> · {detail.last_review.note}</span></div>}<button className="review-cta" onClick={() => setReviewOpen(true)}><ShieldCheck size={17} />Record a planner decision</button>{reviewOpen && <ReviewForm facilityId={detail.facility_id} capability={detail.capability} onCancel={() => setReviewOpen(false)} onSaved={() => { setReviewOpen(false); onReviewed(); }} />}</>}</aside></div>;
 }
 
@@ -483,7 +597,7 @@ function DataHealthView() {
   if (health.isLoading) return <main className="subpage"><SkeletonRows /></main>;
   if (!health.data) return <main className="subpage"><div className="empty-state"><AlertTriangle /><h3>Health profile unavailable</h3></div></main>;
   const data = health.data;
-  return <main className="subpage"><PageLead eyebrow="Dataset health" title="Know the blind spots before making the map." badge="Shared catalog · live profile" /><section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state values" value={data.raw_state_values} tone="warning" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="NFHS exact join" value={`${data.nfhs_join_rate}%`} /></section><section className="health-layout"><article className="health-card"><CardHeading eyebrow="Completeness" title="Coverage by evidence field" icon={<Database size={19} />} /><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article><article className="health-card"><CardHeading eyebrow="Claim pressure" title="Claims versus corroboration" icon={<Hospital size={19} />} /><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" />Claimed</span><span><i className="supported" />Corroborated</span></div></article></section></main>;
+  return <main className="subpage"><PageLead eyebrow="Dataset health" title="Know the blind spots before making the map." badge="Shared catalog · live profile" /><section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state values" value={data.raw_state_values} tone="warning" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="Verified / plausible locations" value={`${data.verified_location_rate}%`} /></section><section className="health-layout"><article className="health-card"><CardHeading eyebrow="Completeness" title="Coverage by evidence field" icon={<Database size={19} />} /><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article><article className="health-card"><CardHeading eyebrow="Claim pressure" title="Claims versus corroboration" icon={<Hospital size={19} />} /><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" />Claimed</span><span><i className="supported" />Corroborated</span></div></article></section></main>;
 }
 
 function MethodologyView() {
