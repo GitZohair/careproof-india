@@ -81,19 +81,60 @@ measured AS (
     ) AS description_sentences
   FROM raw
 ),
+state_aliases(normalized_state, canonical_state) AS (
+  SELECT * FROM VALUES
+    ('andamanandnicobarislands', 'Andaman And Nicobar Islands'),
+    ('andhrapradesh', 'Andhra Pradesh'),
+    ('arunachalpradesh', 'Arunachal Pradesh'),
+    ('assam', 'Assam'),
+    ('bihar', 'Bihar'),
+    ('chandigarh', 'Chandigarh'),
+    ('chhattisgarh', 'Chhattisgarh'),
+    ('chattisgarh', 'Chhattisgarh'),
+    ('dadraandnagarhavelianddamananddiu', 'Dadra And Nagar Haveli And Daman And Diu'),
+    ('thedadraandnagarhavelianddamananddiu', 'Dadra And Nagar Haveli And Daman And Diu'),
+    ('delhi', 'Delhi'),
+    ('nctofdelhi', 'Delhi'),
+    ('nationalcapitalterritoryofdelhi', 'Delhi'),
+    ('goa', 'Goa'),
+    ('gujarat', 'Gujarat'),
+    ('haryana', 'Haryana'),
+    ('himachalpradesh', 'Himachal Pradesh'),
+    ('jammuandkashmir', 'Jammu And Kashmir'),
+    ('jharkhand', 'Jharkhand'),
+    ('karnataka', 'Karnataka'),
+    ('kerala', 'Kerala'),
+    ('ladakh', 'Ladakh'),
+    ('lakshadweep', 'Lakshadweep'),
+    ('madhyapradesh', 'Madhya Pradesh'),
+    ('maharashtra', 'Maharashtra'),
+    ('manipur', 'Manipur'),
+    ('meghalaya', 'Meghalaya'),
+    ('mizoram', 'Mizoram'),
+    ('nagaland', 'Nagaland'),
+    ('odisha', 'Odisha'),
+    ('orissa', 'Odisha'),
+    ('odissa', 'Odisha'),
+    ('puducherry', 'Puducherry'),
+    ('pondicherry', 'Puducherry'),
+    ('utofpuducherry', 'Puducherry'),
+    ('punjab', 'Punjab'),
+    ('rajasthan', 'Rajasthan'),
+    ('sikkim', 'Sikkim'),
+    ('tamilnadu', 'Tamil Nadu'),
+    ('telangana', 'Telangana'),
+    ('telengana', 'Telangana'),
+    ('tripura', 'Tripura'),
+    ('uttarpradesh', 'Uttar Pradesh'),
+    ('uttarakhand', 'Uttarakhand'),
+    ('uttaranchal', 'Uttarakhand'),
+    ('uttranchal', 'Uttarakhand'),
+    ('westbengal', 'West Bengal')
+),
 normalized AS (
   SELECT
-    *,
-    COALESCE(
-      INITCAP(TRIM(pin_state)),
-      CASE LOWER(REGEXP_REPLACE(TRIM(raw_state), '[^a-zA-Z]', ''))
-        WHEN 'tamilnadu' THEN 'Tamil Nadu'
-        WHEN 'orissa' THEN 'Odisha'
-        WHEN 'nctofdelhi' THEN 'Delhi'
-        WHEN 'jammuandkashmir' THEN 'Jammu And Kashmir'
-        ELSE NULLIF(TRIM(raw_state), '')
-      END
-    ) AS canonical_state,
+    m.*,
+    COALESCE(pin_alias.canonical_state, raw_alias.canonical_state) AS canonical_state,
     INITCAP(TRIM(pin_district)) AS canonical_district,
     CASE
       WHEN pin_latitude IS NOT NULL AND pin_distance_km <= 25 THEN 'VERIFIED'
@@ -124,7 +165,11 @@ normalized AS (
       IF(LOWER(COALESCE(description, '')) RLIKE 'nearby|listed as|directory|project page|distance from|map listing',
          'CONTEXTUAL_SOURCE_RISK', NULL)
     ), flag -> flag IS NOT NULL) AS quality_flags
-  FROM measured
+  FROM measured m
+  LEFT JOIN state_aliases pin_alias
+    ON LOWER(REGEXP_REPLACE(TRIM(m.pin_state), '[^a-zA-Z]', '')) = pin_alias.normalized_state
+  LEFT JOIN state_aliases raw_alias
+    ON LOWER(REGEXP_REPLACE(TRIM(m.raw_state), '[^a-zA-Z]', '')) = raw_alias.normalized_state
 ),
 ranked AS (
   SELECT *, ROW_NUMBER() OVER (

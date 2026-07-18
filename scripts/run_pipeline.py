@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
@@ -36,6 +37,7 @@ def main() -> None:
         if response.statement_id and response.status and response.status.state and response.status.state.value in {"PENDING", "RUNNING"}:
             response = client.statement_execution.get_statement(response.statement_id)
             while response.status and response.status.state and response.status.state.value in {"PENDING", "RUNNING"}:
+                time.sleep(2)
                 response = client.statement_execution.get_statement(response.statement_id)
             if response.status and response.status.state and response.status.state.value == "FAILED":
                 raise RuntimeError(response.status.error)

@@ -28,6 +28,15 @@ CAPABILITIES = [
 ]
 CAPABILITY_CODES = {item["code"] for item in CAPABILITIES}
 TRUST_TIERS = {"ALL", "STRONG", "MODERATE", "WEAK", "INSUFFICIENT", "NEEDS_REVIEW"}
+INDIA_STATES = (
+    "Andaman And Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
+    "Chandigarh", "Chhattisgarh", "Dadra And Nagar Haveli And Daman And Diu", "Delhi", "Goa",
+    "Gujarat", "Haryana", "Himachal Pradesh", "Jammu And Kashmir", "Jharkhand", "Karnataka",
+    "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya",
+    "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu",
+    "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
+)
+INDIA_STATE_SET = set(INDIA_STATES)
 
 
 def checked_capability(value: str) -> str:
@@ -44,6 +53,15 @@ def checked_tier(value: str) -> str:
     return tier
 
 
+def checked_state(value: str) -> str:
+    state = value.strip()
+    if state.upper() == "ALL":
+        return "ALL"
+    if state not in INDIA_STATE_SET:
+        raise HTTPException(status_code=422, detail="Unsupported Indian state or union territory")
+    return state
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "careproof"}
@@ -57,12 +75,14 @@ def filters() -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _filters_data() -> dict[str, Any]:
     rows = warehouse.query(f"SELECT DISTINCT canonical_state AS state FROM {settings.facility_table} WHERE canonical_state IS NOT NULL ORDER BY 1")
-    return {"capabilities": CAPABILITIES, "states": [row["state"] for row in rows]}
+    present = {row["state"] for row in rows}
+    return {"capabilities": CAPABILITIES, "states": [state for state in INDIA_STATES if state in present]}
 
 
 @app.get("/api/summary")
 def summary(capability: str = "ICU", state: str = "ALL") -> dict[str, int]:
     capability = checked_capability(capability)
+    state = checked_state(state)
     rows = _summary_data(capability, state)
     return {**rows, "reviewed": reviews.count()}
 
@@ -94,7 +114,7 @@ def facilities(
     tier: str = "ALL",
     q: str = Query(default="", max_length=100),
 ) -> list[dict[str, Any]]:
-    return _facility_rows(checked_capability(capability), state, checked_tier(tier), q.strip())
+    return _facility_rows(checked_capability(capability), checked_state(state), checked_tier(tier), q.strip())
 
 
 @lru_cache(maxsize=256)
@@ -123,7 +143,7 @@ def _facility_rows(capability: str, state: str, tier: str, query: str) -> list[d
 
 @app.get("/api/map-points")
 def map_points(capability: str = "ICU", state: str = "ALL") -> list[dict[str, Any]]:
-    return _map_points(checked_capability(capability), state)
+    return _map_points(checked_capability(capability), checked_state(state))
 
 
 @lru_cache(maxsize=128)
@@ -158,7 +178,7 @@ def _map_points(capability: str, state: str) -> list[dict[str, Any]]:
 
 @app.get("/api/regions")
 def regions(capability: str = "ICU", state: str = "ALL") -> list[dict[str, Any]]:
-    return _region_rows(checked_capability(capability), state)
+    return _region_rows(checked_capability(capability), checked_state(state))
 
 
 @lru_cache(maxsize=128)
@@ -186,7 +206,7 @@ def _region_rows(capability: str, state: str) -> list[dict[str, Any]]:
 
 @app.get("/api/capability-benchmark")
 def capability_benchmark(state: str = "ALL") -> list[dict[str, Any]]:
-    return _capability_benchmark(state)
+    return _capability_benchmark(checked_state(state))
 
 
 @lru_cache(maxsize=32)
