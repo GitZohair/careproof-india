@@ -104,6 +104,149 @@ def _facility_rows(capability: str, state: str, tier: str, query: str) -> list[d
     return rows
 
 
+@app.get("/api/map-points")
+def map_points(capability: str = "ICU", state: str = "ALL") -> list[dict[str, Any]]:
+    return _map_points(capability, state)
+
+
+@lru_cache(maxsize=128)
+def _map_points(capability: str, state: str) -> list[dict[str, Any]]:
+    rows = warehouse.query(
+        f"""
+        WITH ranked AS (
+          SELECT facility_id, name, city, canonical_state AS state,
+                 canonical_district AS district, evidence_strength, tier,
+                 location_confidence, canonical_latitude AS latitude,
+                 canonical_longitude AS longitude,
+                 ROW_NUMBER() OVER (PARTITION BY tier ORDER BY XXHASH64(facility_id)) AS sample_rank
+          FROM {settings.trust_table}
+          WHERE capability=:capability
+            AND (:state='ALL' OR canonical_state=:state)
+            AND canonical_latitude BETWEEN 6 AND 38.6
+            AND canonical_longitude BETWEEN 68 AND 98
+        )
+        SELECT facility_id, name, city, state, district, evidence_strength, tier,
+               location_confidence, latitude, longitude
+        FROM ranked
+        WHERE sample_rank <= 260
+        ORDER BY CASE tier WHEN 'STRONG' THEN 1 WHEN 'MODERATE' THEN 2 WHEN 'WEAK' THEN 3
+                           WHEN 'NEEDS_REVIEW' THEN 4 ELSE 5 END,
+                 evidence_strength DESC
+        LIMIT 1200
+        """,
+        {"capability": capability, "state": state},
+    )
+    return rows
+
+
+@app.get("/api/regions")
+def regions(capability: str = "ICU", state: str = "ALL") -> list[dict[str, Any]]:
+    return _region_rows(capability, state)
+
+
+@lru_cache(maxsize=128)
+def _region_rows(capability: str, state: str) -> list[dict[str, Any]]:
+    rows = warehouse.query(
+        f"""
+        SELECT canonical_state AS state, canonical_district AS district,
+               assessed_facilities AS facilities, strong, moderate, weak,
+               insufficient, needs_review, location_issues,
+               mean_evidence_strength,
+               assessed_facilities - strong - moderate AS evidence_gap,
+               ROUND(100.0 * (strong + moderate) / NULLIF(assessed_facilities, 0), 1) AS reliable_share
+        FROM {settings.region_table}
+        WHERE capability=:capability
+          AND (:state='ALL' OR canonical_state=:state)
+          AND canonical_district IS NOT NULL
+          AND assessed_facilities >= 5
+        ORDER BY evidence_gap DESC, reliable_share ASC
+        LIMIT 10
+        """,
+        {"capability": capability, "state": state},
+    )
+    return rows
+
+
+@app.get("/api/resolve-location")
+def resolve_location(q: str = Query(min_length=2, max_length=80)) -> dict[str, Any]:
+    query = q.strip()
+    if query.isdigit():
+        rows = warehouse.query(
+            f"""
+            SELECT CAST(pincode AS STRING) AS label, canonical_state AS state,
+                   canonical_district AS district, AVG(canonical_latitude) AS latitude,
+                   AVG(canonical_longitude) AS longitude, COUNT(*) AS matched_facilities
+            FROM {settings.facility_table}
+            WHERE pincode=:pincode
+              AND canonical_latitude IS NOT NULL AND canonical_longitude IS NOT NULL
+            GROUP BY pincode, canonical_state, canonical_district
+            ORDER BY matched_facilities DESC LIMIT 1
+            """,
+            {"pincode": int(query)},
+        )
+    else:
+        rows = warehouse.query(
+            f"""
+            SELECT COALESCE(city, canonical_district) AS label, canonical_state AS state,
+                   canonical_district AS district, AVG(canonical_latitude) AS latitude,
+                   AVG(canonical_longitude) AS longitude, COUNT(*) AS matched_facilities
+            FROM {settings.facility_table}
+            WHERE canonical_latitude IS NOT NULL AND canonical_longitude IS NOT NULL
+              AND (LOWER(city)=LOWER(:query) OR LOWER(canonical_district)=LOWER(:query)
+                   OR LOWER(city) LIKE CONCAT(LOWER(:query), '%')
+                   OR LOWER(canonical_district) LIKE CONCAT(LOWER(:query), '%'))
+            GROUP BY city, canonical_state, canonical_district
+            ORDER BY CASE WHEN LOWER(city)=LOWER(:query) OR LOWER(canonical_district)=LOWER(:query) THEN 0 ELSE 1 END,
+                     matched_facilities DESC
+            LIMIT 1
+            """,
+            {"query": query},
+        )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No mapped PIN, city or district matched that search")
+    row = rows[0]
+    row["matched_facilities"] = int(row.get("matched_facilities") or 0)
+    return row
+
+
+@app.get("/api/nearest")
+def nearest_facilities(
+    capability: str = "ICU",
+    latitude: float = Query(ge=6, le=38.6),
+    longitude: float = Query(ge=68, le=98),
+) -> list[dict[str, Any]]:
+    rows = warehouse.query(
+        f"""
+        WITH distances AS (
+          SELECT facility_id, name, city, canonical_state AS state,
+                 canonical_district AS district, capability, evidence_strength, tier,
+                 facet_count, source_domain_count, location_confidence,
+                 canonical_latitude AS latitude, canonical_longitude AS longitude, flags,
+                 6371 * 2 * ASIN(SQRT(
+                   POWER(SIN(RADIANS(canonical_latitude - :latitude) / 2), 2)
+                   + COS(RADIANS(:latitude)) * COS(RADIANS(canonical_latitude))
+                   * POWER(SIN(RADIANS(canonical_longitude - :longitude) / 2), 2)
+                 )) AS distance_km_raw
+          FROM {settings.trust_table}
+          WHERE capability=:capability
+            AND canonical_latitude BETWEEN 6 AND 38.6
+            AND canonical_longitude BETWEEN 68 AND 98
+        )
+        SELECT facility_id, name, city, state, district, capability,
+               evidence_strength, tier, facet_count, source_domain_count,
+               location_confidence, latitude, longitude, flags,
+               ROUND(distance_km_raw, 1) AS distance_km
+        FROM distances
+        ORDER BY distance_km_raw ASC, evidence_strength DESC
+        LIMIT 8
+        """,
+        {"capability": capability, "latitude": latitude, "longitude": longitude},
+    )
+    for row in rows:
+        row["flags"] = json_array(row.get("flags"))
+    return rows
+
+
 @app.get("/api/facilities/{facility_id}")
 def facility_detail(facility_id: str, capability: str = "ICU") -> dict[str, Any]:
     row = dict(_facility_detail_data(facility_id, capability))
@@ -122,7 +265,7 @@ def _facility_detail_data(facility_id: str, capability: str) -> dict[str, Any]:
                t.canonical_latitude AS latitude, t.canonical_longitude AS longitude,
                t.flags, t.component_direct, t.component_equipment, t.component_staff,
                t.component_capacity, t.component_procedure, t.component_sources,
-               f.address, f.description, f.capacity, f.number_doctors, f.source_urls
+               f.pincode, f.address, f.description, f.capacity, f.number_doctors, f.source_urls
         FROM {settings.trust_table} t
         JOIN {settings.facility_table} f USING (facility_id)
         WHERE t.facility_id=:facility_id AND t.capability=:capability

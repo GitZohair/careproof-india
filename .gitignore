@@ -13,4 +13,5 @@ __pycache__/
 .pytest_cache/
 playwright-report/
 test-results/
+.qa/
 1784382653830-04-Databricks-Data-Legend.docx.pdf

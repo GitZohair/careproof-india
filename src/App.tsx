@@ -1,26 +1,55 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { geoMercator, geoPath } from "d3-geo";
+import { feature } from "topojson-client";
+import world from "world-atlas/countries-110m.json";
 import {
   AlertTriangle,
   ArrowUpRight,
+  BarChart3,
   Check,
   ChevronRight,
-  CircleHelp,
+  Compass,
   Database,
   FileCheck2,
-  Filter,
   Flag,
   Hospital,
   Info,
+  Layers3,
+  ListFilter,
+  LocateFixed,
   MapPin,
+  Navigation,
+  Route,
   Search,
   ShieldCheck,
-  Sparkles,
+  Target,
   X,
 } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { api } from "./api";
-import type { FacilitySummary, ReviewDecision, TrustTier } from "./types";
+import type {
+  FacilitySummary,
+  MapPoint,
+  NearestFacility,
+  ResolvedLocation,
+  ReviewDecision,
+  Summary,
+  TrustTier,
+} from "./types";
+
+type View = "landscape" | "access" | "review" | "health" | "methodology";
 
 const FALLBACK_CAPABILITIES = [
   { code: "ICU", label: "ICU" },
@@ -32,12 +61,26 @@ const FALLBACK_CAPABILITIES = [
 ];
 
 const TIER_LABEL: Record<TrustTier, string> = {
-  STRONG: "Strong evidence",
-  MODERATE: "Moderate evidence",
-  WEAK: "Weak evidence",
-  INSUFFICIENT: "Insufficient evidence",
-  NEEDS_REVIEW: "Needs review",
+  STRONG: "Strong",
+  MODERATE: "Moderate",
+  WEAK: "Weak",
+  INSUFFICIENT: "Insufficient",
+  NEEDS_REVIEW: "Review",
 };
+
+const TIER_COLORS: Record<TrustTier, string> = {
+  STRONG: "#14766e",
+  MODERATE: "#356c86",
+  WEAK: "#c27b20",
+  INSUFFICIENT: "#9ba7a2",
+  NEEDS_REVIEW: "#bd5147",
+};
+
+const geographyCollection = feature(
+  world as never,
+  (world as unknown as { objects: { countries: never } }).objects.countries,
+) as unknown as { features: Array<{ id: string | number }> };
+const INDIA_GEOGRAPHY = geographyCollection.features.find((item) => String(item.id) === "356");
 
 function sourceHost(url: string) {
   try {
@@ -51,33 +94,28 @@ function TierBadge({ tier }: { tier: TrustTier }) {
   return <span className={`tier tier--${tier.toLowerCase()}`}>{TIER_LABEL[tier]}</span>;
 }
 
-function Metric({ label, value, tone }: { label: string; value: number | string; tone?: string }) {
+function Metric({ label, value, tone, hint }: { label: string; value: number | string; tone?: string; hint?: string }) {
   return (
     <div className={`metric ${tone ? `metric--${tone}` : ""}`}>
-      <span>{label}</span>
+      <div><span>{label}</span>{hint && <small>{hint}</small>}</div>
       <strong>{value}</strong>
     </div>
   );
 }
 
 function SkeletonRows() {
-  return (
-    <div className="skeleton-list" aria-label="Loading facilities">
-      {[0, 1, 2, 3, 4].map((item) => (
-        <div className="skeleton-row" key={item}>
-          <i />
-          <div><b /><span /></div>
-          <em />
-        </div>
-      ))}
-    </div>
-  );
+  return <div className="skeleton-list">{[0, 1, 2, 3, 4].map((item) => <div className="skeleton-row" key={item}><i /><div><b /><span /></div><em /></div>)}</div>;
 }
 
 function App() {
-  const [view, setView] = useState<"workbench" | "health" | "methodology">("workbench");
+  const [view, setView] = useState<View>(() => {
+    const requested = new URLSearchParams(window.location.search).get("view");
+    return (["landscape", "access", "review", "health", "methodology"] as View[]).includes(requested as View)
+      ? requested as View
+      : "landscape";
+  });
   const [capability, setCapability] = useState("ICU");
-  const [state, setState] = useState("Maharashtra");
+  const [state, setState] = useState("ALL");
   const [tier, setTier] = useState("ALL");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -86,12 +124,22 @@ function App() {
   const summary = useQuery({
     queryKey: ["summary", capability, state],
     queryFn: () => api.summary(capability, state),
-    enabled: view === "workbench",
+    enabled: view === "landscape" || view === "review",
   });
   const facilities = useQuery({
     queryKey: ["facilities", capability, state, tier, query],
     queryFn: () => api.facilities(capability, state, tier, query),
-    enabled: view === "workbench",
+    enabled: view === "landscape" || view === "review",
+  });
+  const mapPoints = useQuery({
+    queryKey: ["map-points", capability, state],
+    queryFn: () => api.mapPoints(capability, state),
+    enabled: view === "landscape" || view === "access",
+  });
+  const regions = useQuery({
+    queryKey: ["regions", capability, state],
+    queryFn: () => api.regions(capability, state),
+    enabled: view === "landscape",
   });
   const detail = useQuery({
     queryKey: ["facility", selectedId, capability],
@@ -100,104 +148,80 @@ function App() {
   });
 
   const capabilities = filters.data?.capabilities ?? FALLBACK_CAPABILITIES;
-  const states = filters.data?.states ?? ["Maharashtra"];
-  const resultCount = facilities.data?.length ?? 0;
+  const states = filters.data?.states ?? [];
+
+  const updateCapability = (next: string) => {
+    setCapability(next);
+    setSelectedId(null);
+  };
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="brand" onClick={() => setView("workbench")} aria-label="CareProof home">
+        <button className="brand" onClick={() => setView("landscape")} aria-label="CareProof home">
           <span className="brand-mark"><ShieldCheck size={19} /></span>
           <span><strong>CareProof</strong><small>India</small></span>
         </button>
         <nav aria-label="Primary navigation">
-          <button className={view === "workbench" ? "active" : ""} onClick={() => setView("workbench")}>Trust desk</button>
-          <button className={view === "health" ? "active" : ""} onClick={() => setView("health")}>Dataset health</button>
-          <button className={view === "methodology" ? "active" : ""} onClick={() => setView("methodology")}>Methodology</button>
+          <button className={view === "landscape" ? "active" : ""} onClick={() => setView("landscape")}>Landscape</button>
+          <button className={view === "access" ? "active" : ""} onClick={() => setView("access")}>Access finder</button>
+          <button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>Review queue</button>
+          <button className={view === "health" ? "active" : ""} onClick={() => setView("health")}>Data health</button>
+          <button className={view === "methodology" ? "active" : ""} onClick={() => setView("methodology")}>Method</button>
         </nav>
         <div className="topbar-context"><span className="live-dot" /> Live Databricks data</div>
       </header>
 
-      {view === "workbench" && (
-        <main>
-          <section className="intro-strip">
-            <div>
-              <p className="eyebrow">Facility Trust Desk</p>
-              <h1>Claims ranked by evidence, not optimism.</h1>
-              <p>Inspect what supports a facility capability, what is missing, and what requires human verification.</p>
-            </div>
-            <div className="disclaimer"><Info size={16} /><span>Evidence strength is not clinical accreditation or real-time availability.</span></div>
-          </section>
+      {view === "landscape" && (
+        <LandscapeView
+          capability={capability}
+          state={state}
+          capabilities={capabilities}
+          states={states}
+          summary={summary.data}
+          facilities={facilities.data ?? []}
+          points={mapPoints.data ?? []}
+          regionRows={regions.data ?? []}
+          loading={mapPoints.isLoading || summary.isLoading}
+          onCapability={updateCapability}
+          onState={(next) => { setState(next); setSelectedId(null); }}
+          onSelect={setSelectedId}
+          onOpenQueue={() => setView("review")}
+        />
+      )}
 
-          <section className="controls" aria-label="Facility filters">
-            <div className="capability-tabs">
-              <label>Capability</label>
-              <div>
-                {capabilities.map((item) => (
-                  <button
-                    key={item.code}
-                    className={capability === item.code ? "selected" : ""}
-                    onClick={() => { setCapability(item.code); setSelectedId(null); }}
-                  >{item.label}</button>
-                ))}
-              </div>
-            </div>
-            <label className="select-control">
-              <span>State or territory</span>
-              <select value={state} onChange={(event) => { setState(event.target.value); setSelectedId(null); }}>
-                <option value="ALL">All India</option>
-                {states.map((item) => <option value={item} key={item}>{item}</option>)}
-              </select>
-            </label>
-            <label className="search-control">
-              <span>Find a facility</span>
-              <div><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, city or district" /></div>
-            </label>
-          </section>
+      {view === "access" && (
+        <AccessFinder
+          capability={capability}
+          state={state}
+          capabilities={capabilities}
+          states={states}
+          points={mapPoints.data ?? []}
+          onCapability={updateCapability}
+          onState={(next) => { setState(next); setSelectedId(null); }}
+          onSelect={setSelectedId}
+        />
+      )}
 
-          <section className="metrics-grid" aria-label="Evidence summary">
-            <Metric label="Facilities assessed" value={summary.data?.total ?? "—"} />
-            <Metric label="Strong evidence" value={summary.data?.strong ?? "—"} tone="strong" />
-            <Metric label="Needs review" value={summary.data?.needs_review ?? "—"} tone="review" />
-            <Metric label="Location issues" value={summary.data?.location_issues ?? "—"} tone="warning" />
-            <Metric label="Human-reviewed" value={summary.data?.reviewed ?? 0} />
-          </section>
-
-          <section className="workspace">
-            <div className="results-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Ranked facilities</p>
-                  <h2>{capability} evidence in {state === "ALL" ? "India" : state}</h2>
-                </div>
-                <div className="results-actions">
-                  <span>{resultCount} shown</span>
-                  <select aria-label="Filter by evidence tier" value={tier} onChange={(event) => setTier(event.target.value)}>
-                    <option value="ALL">All tiers</option>
-                    <option value="STRONG">Strong</option>
-                    <option value="MODERATE">Moderate</option>
-                    <option value="WEAK">Weak</option>
-                    <option value="INSUFFICIENT">Insufficient</option>
-                    <option value="NEEDS_REVIEW">Needs review</option>
-                  </select>
-                </div>
-              </div>
-              <div className="table-head"><span>Facility</span><span>Evidence</span><span>Signals</span><span /></div>
-              {facilities.isLoading ? <SkeletonRows /> : facilities.isError ? (
-                <div className="empty-state"><AlertTriangle /><h3>Data service is warming up</h3><p>Retry in a moment. Free Edition warehouses can take time to start.</p><button onClick={() => facilities.refetch()}>Retry</button></div>
-              ) : resultCount === 0 ? (
-                <div className="empty-state"><Filter /><h3>No facilities match these filters</h3><p>Broaden the geography or include another evidence tier.</p></div>
-              ) : (
-                <div className="facility-list">
-                  {facilities.data?.map((facility, index) => (
-                    <FacilityRow key={facility.facility_id} facility={facility} rank={index + 1} selected={selectedId === facility.facility_id} onSelect={() => setSelectedId(facility.facility_id)} />
-                  ))}
-                </div>
-              )}
-            </div>
-            <EvidenceLandscape facilities={facilities.data ?? []} capability={capability} />
-          </section>
-        </main>
+      {view === "review" && (
+        <ReviewQueue
+          capability={capability}
+          state={state}
+          tier={tier}
+          query={query}
+          capabilities={capabilities}
+          states={states}
+          summary={summary.data}
+          facilities={facilities.data ?? []}
+          loading={facilities.isLoading}
+          error={facilities.isError}
+          onCapability={updateCapability}
+          onState={(next) => { setState(next); setSelectedId(null); }}
+          onTier={setTier}
+          onQuery={setQuery}
+          onSelect={setSelectedId}
+          onRetry={() => facilities.refetch()}
+        />
       )}
 
       {view === "health" && <DataHealthView />}
@@ -215,116 +239,234 @@ function App() {
   );
 }
 
-function FacilityRow({ facility, rank, selected, onSelect }: { facility: FacilitySummary; rank: number; selected: boolean; onSelect: () => void }) {
+interface ControlProps {
+  capability: string;
+  state: string;
+  capabilities: Array<{ code: string; label: string }>;
+  states: string[];
+  onCapability: (value: string) => void;
+  onState: (value: string) => void;
+}
+
+function PlannerControls({ capability, state, capabilities, states, onCapability, onState }: ControlProps) {
   return (
-    <button className={`facility-row ${selected ? "selected" : ""}`} onClick={onSelect}>
-      <div className="facility-main">
-        <span className="rank">{String(rank).padStart(2, "0")}</span>
-        <div><strong>{facility.name}</strong><span><MapPin size={13} /> {[facility.city, facility.district, facility.state].filter(Boolean).join(", ")}</span></div>
+    <section className="control-rail" aria-label="Planner filters">
+      <div className="capability-tabs">
+        <span className="control-label">Capability</span>
+        <div>{capabilities.map((item) => <button key={item.code} className={capability === item.code ? "selected" : ""} onClick={() => onCapability(item.code)}>{item.label}</button>)}</div>
       </div>
-      <div className="facility-evidence"><TierBadge tier={facility.tier} /><b>{facility.evidence_strength}</b><small>/100</small></div>
-      <div className="facility-signals">
-        <span>{facility.facet_count} facets</span>
-        <span>{facility.source_domain_count} domains</span>
-        {facility.flags.length > 0 && <span className="flag-count"><Flag size={12} /> {facility.flags.length}</span>}
-      </div>
-      <ChevronRight size={17} />
-    </button>
+      <label className="select-control"><span>Geography</span><select value={state} onChange={(event) => onState(event.target.value)}><option value="ALL">All India</option>{states.map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
+    </section>
   );
 }
 
-function EvidenceLandscape({ facilities, capability }: { facilities: FacilitySummary[]; capability: string }) {
-  const counts = useMemo(() => {
-    const buckets: Record<string, number> = { STRONG: 0, MODERATE: 0, WEAK: 0, INSUFFICIENT: 0, NEEDS_REVIEW: 0 };
-    facilities.forEach((facility) => { buckets[facility.tier] += 1; });
-    return Object.entries(buckets).map(([name, value]) => ({ name: name.replace("_", " "), value }));
-  }, [facilities]);
+function PageLead({ eyebrow, title, badge }: { eyebrow: string; title: string; badge: string }) {
   return (
-    <aside className="landscape-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Evidence landscape</p><h2>{capability} signal mix</h2></div><Sparkles size={18} /></div>
-      <div className="chart-wrap">
-        <ResponsiveContainer width="100%" height={230}>
-          <BarChart data={counts} margin={{ top: 12, right: 4, left: -18, bottom: 20 }}>
-            <CartesianGrid vertical={false} stroke="#dbe3df" strokeDasharray="3 4" />
-            <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#65736f" }} angle={-18} textAnchor="end" interval={0} />
-            <YAxis tick={{ fontSize: 11, fill: "#65736f" }} allowDecimals={false} />
-            <Tooltip cursor={{ fill: "#eef3f0" }} contentStyle={{ borderRadius: 8, borderColor: "#d4ddd8" }} />
-            <Bar dataKey="value" fill="#176f68" radius={[5, 5, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="landscape-note"><CircleHelp size={17} /><p><strong>Why this is not a map yet</strong><br />Coordinates that disagree with their PIN are replaced or flagged before spatial decisions are shown.</p></div>
-      <div className="mini-ledger">
-        <span><i className="dot dot--strong" /> Strong</span>
-        <span><i className="dot dot--moderate" /> Moderate</span>
-        <span><i className="dot dot--weak" /> Weak</span>
-        <span><i className="dot dot--review" /> Review</span>
-      </div>
-    </aside>
+    <section className="page-lead">
+      <div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1></div>
+      <div className="scope-badge"><Info size={15} /><span>{badge}</span></div>
+    </section>
   );
+}
+
+function LandscapeView({ capability, state, capabilities, states, summary, facilities, points, regionRows, loading, onCapability, onState, onSelect, onOpenQueue }: ControlProps & {
+  summary?: Summary;
+  facilities: FacilitySummary[];
+  points: MapPoint[];
+  regionRows: Awaited<ReturnType<typeof api.regions>>;
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onOpenQueue: () => void;
+}) {
+  const priority = facilities.slice(0, 5);
+  return (
+    <main className="dashboard-page">
+      <PageLead eyebrow="National planning landscape" title="See where the evidence holds—and where it breaks." badge="Planner intelligence · not patient referral advice" />
+      <PlannerControls {...{ capability, state, capabilities, states, onCapability, onState }} />
+      <section className="metrics-grid metrics-grid--four">
+        <Metric label="Assessed" value={summary?.total?.toLocaleString() ?? "—"} hint={`${capability} profiles`} />
+        <Metric label="Strong evidence" value={summary?.strong ?? "—"} tone="strong" hint="defensible first look" />
+        <Metric label="Needs review" value={summary?.needs_review ?? "—"} tone="review" hint="human attention" />
+        <Metric label="Location issues" value={summary?.location_issues ?? "—"} tone="warning" hint="corrected or unknown" />
+      </section>
+
+      <section className="landscape-grid">
+        <article className="map-card">
+          <CardHeading eyebrow="Geographic signal" title={`${capability} evidence across ${state === "ALL" ? "India" : state}`} icon={<Layers3 size={18} />} aside={`${points.length.toLocaleString()} mapped sample`} />
+          <IndiaSignalMap points={points} loading={loading} onSelect={onSelect} />
+        </article>
+        <div className="insight-stack">
+          <EvidenceDonut summary={summary} capability={capability} />
+          <PriorityDistricts rows={regionRows} />
+        </div>
+      </section>
+
+      <section className="priority-strip">
+        <div className="priority-heading"><div><p className="eyebrow">Evidence leaders</p><h2>Facilities worth inspecting first</h2></div><button onClick={onOpenQueue}>Open full queue <ArrowUpRight size={15} /></button></div>
+        <div className="facility-card-grid">{priority.map((facility, index) => <FacilityCard facility={facility} rank={index + 1} key={facility.facility_id} onSelect={() => onSelect(facility.facility_id)} />)}</div>
+      </section>
+    </main>
+  );
+}
+
+function CardHeading({ eyebrow, title, icon, aside }: { eyebrow: string; title: string; icon: ReactNode; aside?: string }) {
+  return <div className="card-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div><div className="card-heading-aside">{aside && <span>{aside}</span>}{icon}</div></div>;
+}
+
+function IndiaSignalMap({ points, loading, onSelect, origin, highlighted = [] }: { points: MapPoint[]; loading?: boolean; onSelect: (id: string) => void; origin?: ResolvedLocation | null; highlighted?: string[] }) {
+  const projection = useMemo(() => geoMercator().center([82, 22]).scale(790).translate([400, 255]), []);
+  const outline = INDIA_GEOGRAPHY ? geoPath(projection)(INDIA_GEOGRAPHY as never) : null;
+  const highlightedIds = useMemo(() => new Set(highlighted), [highlighted]);
+  return (
+    <div className="map-stage">
+      {loading && <div className="map-loading"><span /><p>Mapping corrected coordinates…</p></div>}
+      <svg viewBox="0 0 800 520" role="img" aria-label="India map with healthcare facility evidence markers">
+        <defs><radialGradient id="mapGlow"><stop offset="0" stopColor="#d9ebe5" stopOpacity=".9" /><stop offset="1" stopColor="#eef3ef" stopOpacity="0" /></radialGradient></defs>
+        <circle cx="400" cy="255" r="310" fill="url(#mapGlow)" />
+        {outline && <path d={outline} className="india-outline" />}
+        {points.map((point) => {
+          const projected = projection([point.longitude, point.latitude]);
+          if (!projected) return null;
+          const highlightedPoint = highlightedIds.has(point.facility_id);
+          return <circle key={point.facility_id} cx={projected[0]} cy={projected[1]} r={highlightedPoint ? 6 : point.tier === "STRONG" ? 3.6 : 2.5} fill={TIER_COLORS[point.tier]} fillOpacity={highlightedPoint ? 1 : .76} stroke={highlightedPoint ? "#fff" : "none"} strokeWidth={highlightedPoint ? 2.2 : 0} className="map-point" onClick={() => onSelect(point.facility_id)}><title>{point.name} · {point.evidence_strength}/100 · {TIER_LABEL[point.tier]}</title></circle>;
+        })}
+        {origin && (() => {
+          const projected = projection([origin.longitude, origin.latitude]);
+          return projected ? <g className="origin-marker"><circle cx={projected[0]} cy={projected[1]} r="13" /><circle cx={projected[0]} cy={projected[1]} r="5" /></g> : null;
+        })()}
+      </svg>
+      <div className="map-legend">{(["STRONG", "MODERATE", "WEAK", "NEEDS_REVIEW", "INSUFFICIENT"] as TrustTier[]).map((item) => <span key={item}><i style={{ background: TIER_COLORS[item] }} />{TIER_LABEL[item]}</span>)}</div>
+      <p className="map-footnote"><Target size={13} /> PIN-conflicting coordinates use the PIN centroid; unknown locations are excluded.</p>
+    </div>
+  );
+}
+
+function EvidenceDonut({ summary, capability }: { summary?: Summary; capability: string }) {
+  const data = summary ? [
+    { name: "Strong", value: summary.strong, color: TIER_COLORS.STRONG },
+    { name: "Moderate", value: summary.moderate, color: TIER_COLORS.MODERATE },
+    { name: "Weak", value: summary.weak, color: TIER_COLORS.WEAK },
+    { name: "Review", value: summary.needs_review, color: TIER_COLORS.NEEDS_REVIEW },
+    { name: "Insufficient", value: summary.insufficient, color: TIER_COLORS.INSUFFICIENT },
+  ] : [];
+  const defensible = summary?.total ? Math.round(((summary.strong + summary.moderate) / summary.total) * 100) : 0;
+  return (
+    <article className="insight-card donut-card">
+      <CardHeading eyebrow="Evidence mix" title={`${capability} confidence`} icon={<BarChart3 size={18} />} />
+      <div className="donut-wrap"><ResponsiveContainer width="100%" height={188}><PieChart><Pie data={data} dataKey="value" innerRadius={58} outerRadius={78} paddingAngle={2} stroke="none">{data.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="donut-center"><strong>{defensible}%</strong><span>strong + moderate</span></div></div>
+      <div className="donut-ledger">{data.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><b>{item.value}</b></div>)}</div>
+    </article>
+  );
+}
+
+function PriorityDistricts({ rows }: { rows: Awaited<ReturnType<typeof api.regions>> }) {
+  const data = rows.slice(0, 6).map((row) => ({
+    ...row,
+    label: `${row.district}${row.state ? ` · ${row.state}` : ""}`,
+  }));
+  return (
+    <article className="insight-card district-card">
+      <CardHeading eyebrow="Priority districts" title="Uncorroborated profiles" icon={<Route size={18} />} />
+      {data.length === 0 ? <p className="card-empty">No district aggregation is available for this selection.</p> : <ResponsiveContainer width="100%" height={224}><BarChart data={data} layout="vertical" margin={{ top: 4, right: 34, left: 12, bottom: 0 }}><CartesianGrid horizontal={false} stroke="#e1e7e3" /><XAxis type="number" hide /><YAxis dataKey="label" type="category" width={115} tick={{ fontSize: 9, fill: "#566762" }} /><Tooltip formatter={(value) => [value, "Weak / uncorroborated"]} /><Bar dataKey="evidence_gap" fill="#c27b20" radius={[0, 5, 5, 0]} label={{ position: "right", fontSize: 9, fill: "#53635e" }} /></BarChart></ResponsiveContainer>}
+    </article>
+  );
+}
+
+function FacilityCard({ facility, rank, onSelect }: { facility: FacilitySummary; rank: number; onSelect: () => void }) {
+  return <button className="facility-card" onClick={onSelect}><div className="facility-card-top"><span>{String(rank).padStart(2, "0")}</span><TierBadge tier={facility.tier} /></div><h3>{facility.name}</h3><p><MapPin size={12} />{[facility.city, facility.state].filter(Boolean).join(", ")}</p><div className="facility-card-score"><strong>{facility.evidence_strength}</strong><span>/100</span><small>{facility.facet_count} facets · {facility.source_domain_count} domains</small></div></button>;
+}
+
+function AccessFinder({ capability, state, capabilities, states, points, onCapability, onState, onSelect }: ControlProps & { points: MapPoint[]; onSelect: (id: string) => void }) {
+  const [locationQuery, setLocationQuery] = useState("");
+  const [origin, setOrigin] = useState<ResolvedLocation | null>(null);
+  const [locationError, setLocationError] = useState("");
+  const resolver = useMutation({
+    mutationFn: api.resolveLocation,
+    onSuccess: (location) => { setOrigin(location); setLocationError(""); if (location.state) onState(location.state); },
+    onError: () => setLocationError("No mapped PIN, city or district matched that search."),
+  });
+  const nearest = useQuery({
+    queryKey: ["nearest", capability, origin?.latitude, origin?.longitude],
+    queryFn: () => api.nearest(capability, origin!.latitude, origin!.longitude),
+    enabled: Boolean(origin),
+  });
+  const nearestPoints = (nearest.data ?? []).filter((item) => item.latitude != null && item.longitude != null);
+  const mapData = useMemo(() => {
+    const merged = new Map(points.map((item) => [item.facility_id, item]));
+    nearestPoints.forEach((item) => merged.set(item.facility_id, item as MapPoint));
+    return [...merged.values()];
+  }, [points, nearestPoints]);
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) { setLocationError("This browser does not expose geolocation."); return; }
+    setLocationError("");
+    navigator.geolocation.getCurrentPosition(
+      (position) => setOrigin({ label: "Current location", state: null, district: null, latitude: position.coords.latitude, longitude: position.coords.longitude, matched_facilities: 0 }),
+      () => setLocationError("Location permission was denied. Search by city or PIN instead."),
+      { enableHighAccuracy: false, timeout: 10_000 },
+    );
+  };
+
+  return (
+    <main className="dashboard-page">
+      <PageLead eyebrow="Geographic access finder" title={`Find the nearest evidenced ${capability} claims.`} badge="Distance + evidence · no live availability" />
+      <PlannerControls {...{ capability, state, capabilities, states, onCapability, onState }} />
+      <section className="locator-card">
+        <div><p className="eyebrow">Set an origin</p><h2>City, district or 6-digit PIN</h2></div>
+        <div className="locator-input"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && locationQuery.trim().length >= 2) resolver.mutate(locationQuery.trim()); }} placeholder="Try Jaipur or 302001" /><button disabled={locationQuery.trim().length < 2 || resolver.isPending} onClick={() => resolver.mutate(locationQuery.trim())}>{resolver.isPending ? "Locating…" : "Find"}</button></div>
+        <button className="location-button" onClick={useMyLocation}><LocateFixed size={16} /> Use my location</button>
+        {origin && <div className="origin-chip"><Navigation size={14} /><span><strong>{origin.label}</strong>{[origin.district, origin.state].filter(Boolean).join(", ") && ` · ${[origin.district, origin.state].filter(Boolean).join(", ")}`}</span></div>}
+        {locationError && <p className="locator-error">{locationError}</p>}
+      </section>
+      <section className="access-grid">
+        <article className="map-card access-map"><CardHeading eyebrow="Access radius" title={origin ? `From ${origin.label}` : "Choose an origin to rank distance"} icon={<Compass size={18} />} aside={`${nearestPoints.length} nearest shown`} /><IndiaSignalMap points={mapData} origin={origin} highlighted={nearestPoints.map((item) => item.facility_id)} onSelect={onSelect} /></article>
+        <article className="nearest-panel">
+          <CardHeading eyebrow="Nearest claims" title={`${capability} facilities`} icon={<Navigation size={18} />} />
+          {!origin ? <div className="nearest-empty"><MapPin size={25} /><h3>Start with a place</h3><p>We rank corrected coordinates by distance, then show the evidence tier beside each result.</p></div> : nearest.isLoading ? <SkeletonRows /> : <div className="nearest-list">{nearest.data?.map((facility, index) => <NearestRow facility={facility} rank={index + 1} key={facility.facility_id} onSelect={() => onSelect(facility.facility_id)} />)}</div>}
+          <div className="access-warning"><AlertTriangle size={15} /><span>Nearest does not mean clinically suitable or currently available. Verify before programme referral.</span></div>
+        </article>
+      </section>
+    </main>
+  );
+}
+
+function NearestRow({ facility, rank, onSelect }: { facility: NearestFacility; rank: number; onSelect: () => void }) {
+  return <button className="nearest-row" onClick={onSelect}><span className="nearest-rank">{rank}</span><div><strong>{facility.name}</strong><p>{[facility.city, facility.state].filter(Boolean).join(", ")}</p><TierBadge tier={facility.tier} /></div><div className="nearest-distance"><strong>{facility.distance_km}</strong><span>km</span><small>{facility.evidence_strength}/100</small></div><ChevronRight size={16} /></button>;
+}
+
+function ReviewQueue({ capability, state, tier, query, capabilities, states, summary, facilities, loading, error, onCapability, onState, onTier, onQuery, onSelect, onRetry }: ControlProps & {
+  tier: string;
+  query: string;
+  summary?: Summary;
+  facilities: FacilitySummary[];
+  loading: boolean;
+  error: boolean;
+  onTier: (value: string) => void;
+  onQuery: (value: string) => void;
+  onSelect: (id: string) => void;
+  onRetry: () => void;
+}) {
+  return (
+    <main className="dashboard-page review-page">
+      <PageLead eyebrow="Evidence review queue" title="Open the record only when the signal needs scrutiny." badge="Sentence receipts + persistent planner decisions" />
+      <PlannerControls {...{ capability, state, capabilities, states, onCapability, onState }} />
+      <section className="queue-summary"><Metric label="Strong" value={summary?.strong ?? "—"} tone="strong" /><Metric label="Needs review" value={summary?.needs_review ?? "—"} tone="review" /><Metric label="Human-reviewed" value={summary?.reviewed ?? 0} /></section>
+      <section className="results-panel">
+        <div className="queue-toolbar"><div><p className="eyebrow">Ranked facilities</p><h2>{capability} evidence · {state === "ALL" ? "India" : state}</h2></div><div className="queue-filters"><label><ListFilter size={15} /><select value={tier} onChange={(event) => onTier(event.target.value)}><option value="ALL">All tiers</option><option value="STRONG">Strong</option><option value="MODERATE">Moderate</option><option value="WEAK">Weak</option><option value="INSUFFICIENT">Insufficient</option><option value="NEEDS_REVIEW">Needs review</option></select></label><label><Search size={15} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Name, city or district" /></label></div></div>
+        <div className="table-head"><span>Facility</span><span>Evidence</span><span>Signals</span><span /></div>
+        {loading ? <SkeletonRows /> : error ? <div className="empty-state"><AlertTriangle /><h3>Data service is warming up</h3><button onClick={onRetry}>Retry</button></div> : facilities.length === 0 ? <div className="empty-state"><ListFilter /><h3>No facilities match these filters</h3></div> : <div className="facility-list">{facilities.map((facility, index) => <FacilityRow key={facility.facility_id} facility={facility} rank={index + 1} onSelect={() => onSelect(facility.facility_id)} />)}</div>}
+      </section>
+    </main>
+  );
+}
+
+function FacilityRow({ facility, rank, onSelect }: { facility: FacilitySummary; rank: number; onSelect: () => void }) {
+  return <button className="facility-row" onClick={onSelect}><div className="facility-main"><span className="rank">{String(rank).padStart(2, "0")}</span><div><strong>{facility.name}</strong><span><MapPin size={13} />{[facility.city, facility.district, facility.state].filter(Boolean).join(", ")}</span></div></div><div className="facility-evidence"><TierBadge tier={facility.tier} /><b>{facility.evidence_strength}</b><small>/100</small></div><div className="facility-signals"><span>{facility.facet_count} facets</span><span>{facility.source_domain_count} domains</span>{facility.flags.length > 0 && <span className="flag-count"><Flag size={12} />{facility.flags.length}</span>}</div><ChevronRight size={17} /></button>;
 }
 
 function DetailPanel({ detail, loading, onClose, onReviewed }: { detail: Awaited<ReturnType<typeof api.detail>> | undefined; loading: boolean; onClose: () => void; onReviewed: () => void }) {
   const [reviewOpen, setReviewOpen] = useState(false);
-  return (
-    <div className="drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-      <aside className="detail-drawer" aria-label="Facility evidence dossier">
-        <button className="drawer-close" onClick={onClose} aria-label="Close dossier"><X size={19} /></button>
-        {loading || !detail ? <div className="drawer-loading"><span /><span /><span /></div> : (
-          <>
-            <div className="dossier-header">
-              <p className="eyebrow">Evidence dossier · {detail.capability}</p>
-              <h2>{detail.name}</h2>
-              <p><MapPin size={14} /> {[detail.city, detail.district, detail.state].filter(Boolean).join(", ")}</p>
-              <div className="dossier-verdict"><TierBadge tier={detail.tier} /><strong>{detail.evidence_strength}<small>/100</small></strong></div>
-              <p className="verdict-copy">This measures visible evidence strength—not accreditation, availability, or clinical quality.</p>
-            </div>
-
-            <section className="dossier-section">
-              <div className="section-title"><h3>Why this score</h3><span>v1.0 deterministic model</span></div>
-              <div className="component-grid">
-                {[
-                  ["Direct statement", detail.component_direct, 30],
-                  ["Equipment", detail.component_equipment, 20],
-                  ["Staff & specialty", detail.component_staff, 20],
-                  ["Capacity", detail.component_capacity, 10],
-                  ["Procedures", detail.component_procedure, 10],
-                  ["Source diversity", detail.component_sources, 10],
-                ].map(([label, value, max]) => (
-                  <div className="component" key={String(label)}><span>{label}</span><div><i style={{ width: `${(Number(value) / Number(max)) * 100}%` }} /></div><b>{value}/{max}</b></div>
-                ))}
-              </div>
-            </section>
-
-            {detail.flags.length > 0 && <section className="dossier-section flags-section"><div className="section-title"><h3>Verification flags</h3><span>{detail.flags.length} found</span></div>{detail.flags.map((flag) => <div className="quality-flag" key={flag}><AlertTriangle size={16} /><span>{flag.replaceAll("_", " ")}</span></div>)}</section>}
-
-            <section className="dossier-section">
-              <div className="section-title"><h3>Evidence receipts</h3><span>{detail.evidence.length} excerpts</span></div>
-              <div className="receipt-list">
-                {detail.evidence.length === 0 ? <p className="muted">No supporting excerpts were found outside the capability claim.</p> : detail.evidence.map((receipt, index) => (
-                  <article className="receipt" key={`${receipt.source_field}-${index}`}><div><FileCheck2 size={15} /><strong>{receipt.evidence_type}</strong><span>{receipt.source_field}</span></div><blockquote>“{receipt.quote}”</blockquote></article>
-                ))}
-              </div>
-            </section>
-
-            <section className="dossier-section">
-              <div className="section-title"><h3>Known gaps</h3><span>Honest uncertainty</span></div>
-              <ul className="gap-list">{detail.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>
-            </section>
-
-            <section className="dossier-section">
-              <div className="section-title"><h3>Source trail</h3><span>{detail.source_domain_count} domains</span></div>
-              <div className="source-list">{detail.source_urls.slice(0, 5).map((url) => <a href={url} target="_blank" rel="noreferrer" key={url}>{sourceHost(url)}<ArrowUpRight size={13} /></a>)}</div>
-            </section>
-
-            {detail.last_review && <div className="prior-review"><Check size={15} /><span>Last reviewed: <strong>{detail.last_review.decision}</strong> · {detail.last_review.note}</span></div>}
-            <button className="review-cta" onClick={() => setReviewOpen(true)}><ShieldCheck size={17} /> Record a planner decision</button>
-            {reviewOpen && <ReviewForm facilityId={detail.facility_id} capability={detail.capability} onCancel={() => setReviewOpen(false)} onSaved={() => { setReviewOpen(false); onReviewed(); }} />}
-          </>
-        )}
-      </aside>
-    </div>
-  );
+  return <div className="drawer-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="detail-drawer"><button className="drawer-close" onClick={onClose} aria-label="Close dossier"><X size={19} /></button>{loading || !detail ? <div className="drawer-loading"><span /><span /><span /></div> : <><div className="dossier-header"><p className="eyebrow">Evidence dossier · {detail.capability}</p><h2>{detail.name}</h2><p><MapPin size={14} />{[detail.city, detail.district, detail.state, detail.pincode].filter(Boolean).join(", ")}</p><div className="dossier-verdict"><TierBadge tier={detail.tier} /><strong>{detail.evidence_strength}<small>/100</small></strong></div><p className="verdict-copy">Visible evidence strength—not accreditation, availability or clinical quality.</p></div><section className="dossier-section"><div className="section-title"><h3>Why this score</h3><span>model v1.0</span></div><div className="component-grid">{[["Direct statement", detail.component_direct, 30],["Equipment", detail.component_equipment, 20],["Staff & specialty", detail.component_staff, 20],["Capacity", detail.component_capacity, 10],["Procedures", detail.component_procedure, 10],["Source diversity", detail.component_sources, 10]].map(([label, value, max]) => <div className="component" key={String(label)}><span>{label}</span><div><i style={{ width: `${(Number(value) / Number(max)) * 100}%` }} /></div><b>{value}/{max}</b></div>)}</div></section>{detail.flags.length > 0 && <section className="dossier-section flags-section"><div className="section-title"><h3>Verification flags</h3><span>{detail.flags.length}</span></div>{detail.flags.map((flag) => <div className="quality-flag" key={flag}><AlertTriangle size={16} /><span>{flag.replaceAll("_", " ")}</span></div>)}</section>}<section className="dossier-section"><div className="section-title"><h3>Evidence receipts</h3><span>{detail.evidence.length} excerpts</span></div><div className="receipt-list">{detail.evidence.length === 0 ? <p className="muted">No supporting excerpt was found outside the capability claim.</p> : detail.evidence.map((receipt, index) => <article className="receipt" key={`${receipt.source_field}-${index}`}><div><FileCheck2 size={15} /><strong>{receipt.evidence_type}</strong><span>{receipt.source_field}</span></div><blockquote>“{receipt.quote}”</blockquote></article>)}</div></section><section className="dossier-section"><div className="section-title"><h3>Known gaps</h3><span>Honest uncertainty</span></div><ul className="gap-list">{detail.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></section><section className="dossier-section"><div className="section-title"><h3>Source trail</h3><span>{detail.source_domain_count} domains</span></div><div className="source-list">{detail.source_urls.slice(0, 5).map((url, index) => <a href={url} target="_blank" rel="noreferrer" key={`${url}-${index}`}>{sourceHost(url)}<ArrowUpRight size={13} /></a>)}</div></section>{detail.last_review && <div className="prior-review"><Check size={15} /><span>Last reviewed: <strong>{detail.last_review.decision}</strong> · {detail.last_review.note}</span></div>}<button className="review-cta" onClick={() => setReviewOpen(true)}><ShieldCheck size={17} />Record a planner decision</button>{reviewOpen && <ReviewForm facilityId={detail.facility_id} capability={detail.capability} onCancel={() => setReviewOpen(false)} onSaved={() => { setReviewOpen(false); onReviewed(); }} />}</>}</aside></div>;
 }
 
 function ReviewForm({ facilityId, capability, onCancel, onSaved }: { facilityId: string; capability: string; onCancel: () => void; onSaved: () => void }) {
@@ -332,22 +474,8 @@ function ReviewForm({ facilityId, capability, onCancel, onSaved }: { facilityId:
   const [decision, setDecision] = useState<ReviewDecision["decision"]>("VERIFY");
   const [overrideTier, setOverrideTier] = useState<TrustTier>("MODERATE");
   const [note, setNote] = useState("");
-  const mutation = useMutation({
-    mutationFn: () => api.review({ facility_id: facilityId, capability, decision, override_tier: decision === "OVERRIDE" ? overrideTier : null, note }),
-    onSuccess: () => { client.invalidateQueries({ queryKey: ["facility", facilityId] }); onSaved(); },
-  });
-  return (
-    <div className="review-form">
-      <div className="section-title"><h3>Planner decision</h3><button onClick={onCancel}><X size={16} /></button></div>
-      <div className="decision-grid">
-        {(["CONFIRM", "VERIFY", "OVERRIDE"] as const).map((item) => <button className={decision === item ? "selected" : ""} onClick={() => setDecision(item)} key={item}>{item === "CONFIRM" ? "Confirm assessment" : item === "VERIFY" ? "Field verification" : "Override tier"}</button>)}
-      </div>
-      {decision === "OVERRIDE" && <label><span>Override evidence tier</span><select value={overrideTier} onChange={(event) => setOverrideTier(event.target.value as TrustTier)}><option value="STRONG">Strong</option><option value="MODERATE">Moderate</option><option value="WEAK">Weak</option><option value="INSUFFICIENT">Insufficient</option></select></label>}
-      <label><span>Decision note <b>required</b></span><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What did you verify, and what should the next planner know?" /></label>
-      {mutation.isError && <p className="form-error">The review store is unavailable. Your assessment was not saved.</p>}
-      <div className="form-actions"><button onClick={onCancel}>Cancel</button><button className="primary" disabled={note.trim().length < 10 || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Saving…" : "Save decision"}</button></div>
-    </div>
-  );
+  const mutation = useMutation({ mutationFn: () => api.review({ facility_id: facilityId, capability, decision, override_tier: decision === "OVERRIDE" ? overrideTier : null, note }), onSuccess: () => { client.invalidateQueries({ queryKey: ["facility", facilityId] }); onSaved(); } });
+  return <div className="review-form"><div className="section-title"><h3>Planner decision</h3><button onClick={onCancel}><X size={16} /></button></div><div className="decision-grid">{(["CONFIRM", "VERIFY", "OVERRIDE"] as const).map((item) => <button className={decision === item ? "selected" : ""} onClick={() => setDecision(item)} key={item}>{item === "CONFIRM" ? "Confirm" : item === "VERIFY" ? "Field verification" : "Override tier"}</button>)}</div>{decision === "OVERRIDE" && <label><span>Override evidence tier</span><select value={overrideTier} onChange={(event) => setOverrideTier(event.target.value as TrustTier)}><option value="STRONG">Strong</option><option value="MODERATE">Moderate</option><option value="WEAK">Weak</option><option value="INSUFFICIENT">Insufficient</option></select></label>}<label><span>Decision note <b>required</b></span><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What did you verify, and what should the next planner know?" /></label>{mutation.isError && <p className="form-error">The review was not saved.</p>}<div className="form-actions"><button onClick={onCancel}>Cancel</button><button className="primary" disabled={note.trim().length < 10 || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Saving…" : "Save decision"}</button></div></div>;
 }
 
 function DataHealthView() {
@@ -355,31 +483,11 @@ function DataHealthView() {
   if (health.isLoading) return <main className="subpage"><SkeletonRows /></main>;
   if (!health.data) return <main className="subpage"><div className="empty-state"><AlertTriangle /><h3>Health profile unavailable</h3></div></main>;
   const data = health.data;
-  return (
-    <main className="subpage">
-      <section className="subpage-title"><p className="eyebrow">Dataset health</p><h1>Know the blind spots before making the map.</h1><p>A live profile of claims, geography and evidence coverage across the shared catalog.</p></section>
-      <section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state values" value={data.raw_state_values} tone="warning" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="NFHS exact join" value={`${data.nfhs_join_rate}%`} /></section>
-      <section className="health-layout">
-        <article className="health-card"><div className="panel-heading"><div><p className="eyebrow">Completeness</p><h2>Not all fields carry equal weight</h2></div><Database size={19} /></div><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article>
-        <article className="health-card"><div className="panel-heading"><div><p className="eyebrow">Claim pressure</p><h2>Claims versus corroboration</h2></div><Hospital size={19} /></div><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" /> Claimed</span><span><i className="supported" /> Corroborated</span></div></article>
-      </section>
-    </main>
-  );
+  return <main className="subpage"><PageLead eyebrow="Dataset health" title="Know the blind spots before making the map." badge="Shared catalog · live profile" /><section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state values" value={data.raw_state_values} tone="warning" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="NFHS exact join" value={`${data.nfhs_join_rate}%`} /></section><section className="health-layout"><article className="health-card"><CardHeading eyebrow="Completeness" title="Coverage by evidence field" icon={<Database size={19} />} /><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article><article className="health-card"><CardHeading eyebrow="Claim pressure" title="Claims versus corroboration" icon={<Hospital size={19} />} /><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" />Claimed</span><span><i className="supported" />Corroborated</span></div></article></section></main>;
 }
 
 function MethodologyView() {
-  return (
-    <main className="subpage methodology">
-      <section className="subpage-title"><p className="eyebrow">Methodology</p><h1>A score that can show its work.</h1><p>CareProof ranks visible evidence—not hospital quality, accreditation, or current availability.</p></section>
-      <section className="method-grid">
-        <article><span>01</span><h2>Normalize</h2><p>Parse noisy arrays, canonicalize geography through India Post PIN data, and retain every raw field.</p></article>
-        <article><span>02</span><h2>Extract</h2><p>Find capability-specific sentences, equipment, staff, procedures, capacity and independent source domains.</p></article>
-        <article><span>03</span><h2>Challenge</h2><p>Flag directory context, cross-facility contamination, implausible numbers, contradictions and location mismatch.</p></article>
-        <article><span>04</span><h2>Remember</h2><p>Persist planner decisions with the scoring version, reviewer identity, note and complete audit history.</p></article>
-      </section>
-      <section className="weight-card"><div><p className="eyebrow">Evidence model v1.0</p><h2>Transparent by construction</h2></div><div className="weight-list">{[["Direct facility statement",30],["Equipment",20],["Staff and specialty",20],["Capacity",10],["Procedures",10],["Source diversity",10]].map(([label,value]) => <div key={String(label)}><span>{label}</span><strong>{value} pts</strong></div>)}</div></section>
-    </main>
-  );
+  return <main className="subpage methodology"><PageLead eyebrow="Methodology" title="A score that can show its work." badge="Evidence strength · not hospital quality" /><section className="method-grid"><article><span>01</span><h2>Normalize</h2><p>Canonicalize geography through PIN data while retaining raw fields.</p></article><article><span>02</span><h2>Extract</h2><p>Find capability-specific statements, equipment, staff, procedures and capacity.</p></article><article><span>03</span><h2>Challenge</h2><p>Flag contamination, implausible numbers, contradictions and location mismatch.</p></article><article><span>04</span><h2>Remember</h2><p>Persist planner decisions with identity, note and scoring version.</p></article></section><section className="weight-card"><div><p className="eyebrow">Evidence model v1.0</p><h2>Transparent by construction</h2></div><div className="weight-list">{[["Direct facility statement",30],["Equipment",20],["Staff and specialty",20],["Capacity",10],["Procedures",10],["Source diversity",10]].map(([label,value]) => <div key={String(label)}><span>{label}</span><strong>{value} pts</strong></div>)}</div></section></main>;
 }
 
 export default App;
