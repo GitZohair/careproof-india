@@ -47,19 +47,7 @@ Most directories answer “does this facility claim ICU?” CareProof asks “wh
 
 ## Architecture
 
-```text
-Databricks Marketplace / Unity Catalog
-              │
-        SQL transformation
-              │
- facility_clean ── capability_evidence ── trust_profile ── region_summary
-              │                                  │
-        SQL Warehouse                       FastAPI API
-                                                   │
-                              React map + analysis workspace
-                                                   │
-                                   Lakebase review decisions
-```
+![CareProof India architecture: Databricks Marketplace and Unity Catalog flow through a SQL trust layer and FastAPI into a React planner workspace, with MLflow quality gates, Lakebase review decisions, and a GitHub Pages judge build.](docs/assets/careproof-architecture.svg)
 
 The application is a React 19 + TypeScript client served by FastAPI. Databricks SQL supplies the analytical views, while Lakebase stores durable human decisions. D3 Geo renders the India map and Recharts handles analytical charts.
 
