@@ -77,5 +77,4 @@ Upload these after the three required videos:
 2. Facility dossier with Evidence Copilot and cited receipts.
 3. Jaipur resilience simulator after the outage is enabled.
 4. Data Health page with the MLflow PASS result.
-5. A clean architecture poster or one-page PDF.
-
+5. The finished [architecture poster PDF](../output/pdf/careproof-india-architecture-poster.pdf) or [PNG](../output/pdf/careproof-india-architecture-poster.png).
