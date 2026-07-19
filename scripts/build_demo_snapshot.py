@@ -28,6 +28,20 @@ from server.main import (  # noqa: E402
 
 
 PLACES = ("Jaipur", "Pune", "Lucknow")
+DEMO_STATES = (
+    "Andhra Pradesh",
+    "Gujarat",
+    "Haryana",
+    "Karnataka",
+    "Kerala",
+    "Madhya Pradesh",
+    "Maharashtra",
+    "Punjab",
+    "Rajasthan",
+    "Tamil Nadu",
+    "Uttar Pradesh",
+    "West Bengal",
+)
 
 
 def json_default(value: Any):
@@ -51,6 +65,8 @@ def main() -> None:
     facilities: dict[str, list[dict[str, Any]]] = {}
     map_points: dict[str, list[dict[str, Any]]] = {}
     regions: dict[str, list[dict[str, Any]]] = {}
+    state_summaries: dict[str, dict[str, dict[str, Any]]] = {}
+    state_regions: dict[str, dict[str, list[dict[str, Any]]]] = {}
     nearest: dict[str, dict[str, list[dict[str, Any]]]] = {}
     detail_pairs: set[tuple[str, str]] = set()
 
@@ -60,6 +76,11 @@ def main() -> None:
         facilities[capability] = _facility_rows(capability, "ALL", "ALL", "")
         map_points[capability] = _map_points(capability, "ALL")
         regions[capability] = _region_rows(capability, "ALL")
+        state_summaries[capability] = {}
+        state_regions[capability] = {}
+        for state in DEMO_STATES:
+            state_summaries[capability][state] = {**_summary_data(capability, state), "reviewed": 0}
+            state_regions[capability][state] = _region_rows(capability, state)
         nearest[capability] = {}
         if facilities[capability]:
             detail_pairs.add((capability, facilities[capability][0]["facility_id"]))
@@ -81,12 +102,15 @@ def main() -> None:
 
     snapshot = {
         "generated_at": datetime.utcnow().isoformat() + "Z",
-        "filters": {"capabilities": CAPABILITIES, "states": []},
+        "filters": {"capabilities": CAPABILITIES, "states": DEMO_STATES},
         "summaries": summaries,
+        "state_summaries": state_summaries,
         "facilities": facilities,
         "map_points": map_points,
         "regions": regions,
+        "state_regions": state_regions,
         "benchmark": _capability_benchmark("ALL"),
+        "state_benchmarks": {state: _capability_benchmark(state) for state in DEMO_STATES},
         "locations": locations,
         "nearest": nearest,
         "details": details,

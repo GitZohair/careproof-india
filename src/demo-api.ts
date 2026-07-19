@@ -16,10 +16,13 @@ import type {
 interface DemoSnapshot {
   filters: Filters;
   summaries: Record<string, Summary>;
+  state_summaries?: Record<string, Record<string, Summary>>;
   facilities: Record<string, FacilitySummary[]>;
   map_points: Record<string, MapPoint[]>;
   regions: Record<string, RegionSummary[]>;
+  state_regions?: Record<string, Record<string, RegionSummary[]>>;
   benchmark: CapabilityBenchmark[];
+  state_benchmarks?: Record<string, CapabilityBenchmark[]>;
   locations: Record<string, ResolvedLocation>;
   nearest: Record<string, Record<string, NearestFacility[]>>;
   details: Record<string, FacilityDetail>;
@@ -29,6 +32,20 @@ interface DemoSnapshot {
 
 let snapshotPromise: Promise<DemoSnapshot> | null = null;
 const demoReviews = new Map<string, ReviewDecision>();
+const DEMO_STATES = [
+  "Andhra Pradesh",
+  "Gujarat",
+  "Haryana",
+  "Karnataka",
+  "Kerala",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Punjab",
+  "Rajasthan",
+  "Tamil Nadu",
+  "Uttar Pradesh",
+  "West Bengal",
+];
 
 function snapshot() {
   snapshotPromise ??= fetch(`${import.meta.env.BASE_URL}demo-snapshot.json`).then((response) => {
@@ -40,6 +57,68 @@ function snapshot() {
 
 function detailKey(capability: string, facilityId: string) {
   return `${capability}::${facilityId}`;
+}
+
+function inState<T extends { state: string | null }>(rows: T[], state: string) {
+  return state === "ALL" ? rows : rows.filter((item) => item.state === state);
+}
+
+function summaryFromPoints(points: MapPoint[]): Summary {
+  const count = (tier: string) => points.filter((item) => item.tier === tier).length;
+  return {
+    total: points.length,
+    strong: count("STRONG"),
+    moderate: count("MODERATE"),
+    weak: count("WEAK"),
+    insufficient: count("INSUFFICIENT"),
+    needs_review: count("NEEDS_REVIEW"),
+    location_issues: points.filter((item) => ["PIN_FALLBACK", "UNKNOWN"].includes(item.location_confidence)).length,
+    reviewed: 0,
+  };
+}
+
+function regionsFromPoints(points: MapPoint[]): RegionSummary[] {
+  const groups = new Map<string, MapPoint[]>();
+  points.forEach((point) => {
+    if (!point.district) return;
+    groups.set(point.district, [...(groups.get(point.district) ?? []), point]);
+  });
+  return [...groups.entries()]
+    .map(([district, rows]) => {
+      const summary = summaryFromPoints(rows);
+      const defensible = summary.strong + summary.moderate;
+      return {
+        state: rows[0]?.state ?? "",
+        district,
+        facilities: rows.length,
+        strong: summary.strong,
+        moderate: summary.moderate,
+        weak: summary.weak,
+        insufficient: summary.insufficient,
+        needs_review: summary.needs_review,
+        location_issues: summary.location_issues,
+        mean_evidence_strength: Number((rows.reduce((sum, item) => sum + item.evidence_strength, 0) / rows.length).toFixed(1)),
+        evidence_gap: rows.length - defensible,
+        reliable_share: Number(((100 * defensible) / rows.length).toFixed(1)),
+      };
+    })
+    .sort((left, right) => right.evidence_gap - left.evidence_gap || left.reliable_share - right.reliable_share)
+    .slice(0, 10);
+}
+
+function benchmarkFromPoints(data: DemoSnapshot, state: string): CapabilityBenchmark[] {
+  return data.filters.capabilities.map(({ code }) => {
+    const rows = inState(data.map_points[code] ?? [], state);
+    const defensible = rows.filter((item) => ["STRONG", "MODERATE"].includes(item.tier)).length;
+    return {
+      capability: code,
+      total: rows.length,
+      defensible,
+      evidence_gap: rows.length - defensible,
+      defensible_share: rows.length ? Number(((100 * defensible) / rows.length).toFixed(1)) : 0,
+      mean_score: rows.length ? Number((rows.reduce((sum, item) => sum + item.evidence_strength, 0) / rows.length).toFixed(1)) : 0,
+    };
+  });
 }
 
 function distanceSquared(left: ResolvedLocation, latitude: number, longitude: number) {
@@ -68,16 +147,28 @@ function fallbackDetail(facility: FacilitySummary): FacilityDetail {
 }
 
 export const demoApi = {
-  filters: async () => (await snapshot()).filters,
-  summary: async (capability: string, _state: string) => (await snapshot()).summaries[capability],
-  facilities: async (capability: string, _state: string, tier: string, query: string) => {
-    const rows = (await snapshot()).facilities[capability] ?? [];
+  filters: async () => ({ ...(await snapshot()).filters, states: DEMO_STATES }),
+  summary: async (capability: string, state: string) => {
+    const data = await snapshot();
+    if (state === "ALL") return data.summaries[capability];
+    return data.state_summaries?.[capability]?.[state] ?? summaryFromPoints(inState(data.map_points[capability] ?? [], state));
+  },
+  facilities: async (capability: string, state: string, tier: string, query: string) => {
+    const rows = inState((await snapshot()).facilities[capability] ?? [], state);
     const needle = query.trim().toLowerCase();
     return rows.filter((item) => (tier === "ALL" || item.tier === tier) && (!needle || [item.name, item.city, item.district].filter(Boolean).join(" ").toLowerCase().includes(needle)));
   },
-  mapPoints: async (capability: string, _state: string) => (await snapshot()).map_points[capability] ?? [],
-  regions: async (capability: string, _state: string) => (await snapshot()).regions[capability] ?? [],
-  capabilityBenchmark: async (_state: string) => (await snapshot()).benchmark,
+  mapPoints: async (capability: string, state: string) => inState((await snapshot()).map_points[capability] ?? [], state),
+  regions: async (capability: string, state: string) => {
+    const data = await snapshot();
+    if (state === "ALL") return data.regions[capability] ?? [];
+    return data.state_regions?.[capability]?.[state] ?? regionsFromPoints(inState(data.map_points[capability] ?? [], state));
+  },
+  capabilityBenchmark: async (state: string) => {
+    const data = await snapshot();
+    if (state === "ALL") return data.benchmark;
+    return data.state_benchmarks?.[state] ?? benchmarkFromPoints(data, state);
+  },
   resolveLocation: async (query: string) => {
     const data = await snapshot();
     const normalized = query.trim().toLowerCase();

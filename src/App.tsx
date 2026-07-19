@@ -735,7 +735,7 @@ function LandscapeView({
         <Metric
           label="Assessed"
           value={summary?.total?.toLocaleString() ?? "—"}
-          hint={`${capability} profiles`}
+          hint={DEMO_MODE && state !== "ALL" ? "mapped snapshot sample" : `${capability} profiles`}
         />
         <Metric
           label="Strong evidence"
@@ -2452,9 +2452,13 @@ function DataHealthView() {
                 <Check size={14} />
                 <div>
                   <strong>{item.label}</strong>
-                  <small>{item.detail}</small>
+                  <small>
+                    {item.passed
+                      ? `0 violations · no ${item.detail}`
+                      : `${item.value.toLocaleString()} ${item.detail}`}
+                  </small>
                 </div>
-                <b>{item.value.toLocaleString()}</b>
+                <b>{item.passed ? "PASS" : "FAIL"}</b>
               </article>
             ))}
           </div>
