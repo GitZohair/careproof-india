@@ -12,6 +12,12 @@ Use the anonymous judge build for recording: <https://gitzohair.github.io/carepr
 - Test the final uploaded video in an incognito Chrome window.
 - Do not display Databricks credentials, tokens, email, or workspace settings.
 
+## How to use these guides
+
+These are **talking beats, not word-for-word scripts**. Zamin should understand the point of each shot, say it naturally in one sentence, and move on. A small pause or genuine reaction sounds better than memorized delivery. Keep the rhythm: **problem → proof → payoff**.
+
+Useful phrases to make your own: “Here’s the interesting part…”, “What we didn’t want to do was…”, and “This is where it becomes useful.” Do not use all three in one video.
+
 ## 1. Demo Video — UI/UX and product flow
 
 ### Tabs to prepare
@@ -22,18 +28,20 @@ Use the anonymous judge build for recording: <https://gitzohair.github.io/carepr
 
 ### Shot list
 
-| Time | Screen action | Voiceover |
+| Time | Screen action | Talking beat — use your own words |
 |---|---|---|
-| 0–6s | Show the landing page and India evidence map. | “Hospital directories show what facilities claim. CareProof shows planners what the data can actually prove.” |
-| 6–15s | Switch capability tabs and briefly show evidence tiers and regional gaps. | “Across six care capabilities, the map separates strong evidence from weak claims and unreliable locations.” |
-| 15–29s | Open the dossier and click **Why this evidence tier?** in Evidence Copilot. | “Every facility opens as an evidence dossier: a transparent score, known gaps, and a free copilot grounded only in the source receipts.” |
-| 29–42s | Cut to Jaipur Access Finder; point at nearest versus best-evidenced results. | “The Access Finder keeps distance and evidence quality separate, so the nearest listing is not automatically treated as the safest planning assumption.” |
-| 42–52s | Click **Simulate outage** and show the fallback. | “The resilience simulator removes the nearest defensible option and instantly reveals catchment redundancy and fallback distance.” |
-| 52–58s | End on the result card or logo. | “CareProof turns noisy listings into auditable action—without pretending evidence strength is clinical advice.” |
+| 0–6s | Show the landing page and India evidence map. | Hook with the trust problem: a listing can say “ICU,” but where is the proof? Introduce CareProof as the answer. |
+| 6–15s | Switch capability tabs and show evidence tiers and regional gaps. | Explain that this is not another hospital directory; it shows where evidence is strong, weak, or geographically unreliable. |
+| 15–29s | Open the dossier and click **Why this evidence tier?** in Evidence Copilot. | Point out the score, source sentences, gaps, and grounded Copilot. Emphasize that a judge can inspect why, not just accept a number. |
+| 29–42s | Cut to Jaipur Access Finder; point at nearest versus best-evidenced results. | Frame the real planner question: what is nearby, and what is actually defensible? Mention that distance and evidence are intentionally separate. |
+| 42–52s | Click **Simulate outage** and show the fallback. | Make this the reveal: if the nearest defensible option fails, CareProof immediately shows how many alternatives remain and the extra distance. |
+| 52–58s | End on the result card or logo. | Close with the payoff: noisy claims become auditable planning decisions, without pretending to give clinical advice. |
 
 ### Editing note
 
 Use hard cuts between the three prepared tabs. Do not spend video time typing, scrolling long tables, or waiting for animation.
+
+Tone: sound like you are showing a clever product to a friend, not presenting a school report. The outage reveal should carry the most energy.
 
 ## 2. Tech Video — architecture and implementation
 
@@ -46,28 +54,45 @@ Use hard cuts between the three prepared tabs. Do not spend video time typing, s
 
 ### Shot list
 
-| Time | Screen action | Voiceover |
+| Time | Screen action | Talking beat — use your own words |
 |---|---|---|
-| 0–7s | Show the architecture diagram. | “CareProof starts with the Databricks Marketplace dataset shared through Unity Catalog.” |
-| 7–20s | Highlight the SQL transformation flow. | “A deterministic SQL pipeline cleans facilities, extracts capability evidence, builds trust profiles, and aggregates regional coverage.” |
-| 20–32s | Show score components and sentence receipts in a dossier. | “Each score combines direct statements, equipment, staff, capacity, procedures, and source diversity. Every positive signal remains traceable to its source sentence.” |
-| 32–43s | Show the React interface and FastAPI/API layer. | “FastAPI serves the analytical views to a React and TypeScript workspace with D3 geography and Recharts visualizations.” |
-| 43–52s | Show review decision and Data Health/MLflow. | “Lakebase stores human review decisions, while MLflow gates each release with deterministic quality checks.” |
-| 52–58s | Show deployment links. | “The full product runs as a Databricks App, with a read-only snapshot deployed for anonymous judging.” |
+| 0–7s | Show the architecture poster. | Start with the full journey: marketplace data enters a governed Databricks pipeline and leaves as an auditable planner workspace. |
+| 7–20s | Highlight Marketplace, Unity Catalog, and SQL trust layer. | Explain the transformation in plain language: clean facilities, correct geography, extract evidence sentences, score six capabilities, aggregate regions. |
+| 20–32s | Show score components and sentence receipts in a dossier. | Stress the technical principle: the scoring is deterministic and every positive signal can be traced back to a sentence. No mystery ranking. |
+| 32–43s | Show the React interface and FastAPI/API layer. | Briefly connect FastAPI and Databricks SQL to the React/TypeScript map, dossiers, charts, and Access Finder. Avoid reading a library list. |
+| 43–52s | Show review decision and Data Health/MLflow. | Explain that Lakebase preserves human decisions and MLflow blocks a release unless all quality checks pass. Show the 8/8 result. |
+| 52–58s | Show deployment links. | Finish with delivery: full Databricks App for live data, plus the same interface as an anonymous read-only judge build. |
 
 ### Architecture line for a title card
 
 `Marketplace → Unity Catalog → SQL trust layer → FastAPI → React workspace → Lakebase + MLflow`
 
-## 3. Team Video — solo-builder version
+Tone: technically confident but understandable. A useful opening idea is: “There is no magic score hiding here; the whole pipeline is visible.” Say it naturally rather than quoting it.
 
-Record this as a direct-to-camera clip. Keep the background simple and place the CareProof logo or interface behind you.
+## 3. Team Video — Zamin and Zohair
 
-### 55-second script
+Both teammates should appear if possible. Record direct-to-camera with the CareProof interface or architecture poster behind you. This video is about the partnership, not a second product demo.
 
-> Hi, I’m Zohair, the builder behind CareProof India. I handled the product research, data engineering, Databricks architecture, backend, and frontend experience. The problem clicked when I realized a directory can say “ICU” without giving a planner one defensible sentence. So I designed the product around evidence, uncertainty, and human review—not a black-box hospital ranking. During the hackathon I transformed 10,077 listings into 26,174 capability profiles and 75,651 evidence receipts, then built the national map, access analysis, outage simulation, Evidence Copilot, and MLflow quality gate. My favorite moment was seeing the Jaipur fallback scenario work. CareProof is the civic-data product I wanted to exist: useful, honest, and auditable.
+### Team roles
 
-If there are additional teammates, replace the second sentence with one short sentence per person and role. Keep the combined introduction under 15 seconds.
+- **Zamin:** researched the challenge options, selected the **Facility Trust Desk** problem, helped define the project direction, and leads the demo, technical, and team videos.
+- **Zohair:** led implementation across data engineering, Databricks architecture, scoring logic, backend, frontend, deployment, and product polishing.
+
+### 55-second talking flow
+
+| Time | Speaker | Talking beat — use your own words |
+|---|---|---|
+| 0–7s | Both | Introduce yourselves and CareProof India. Keep it warm and quick. |
+| 7–19s | Zamin | Share why Facility Trust Desk stood out while reading the challenge options: the dataset had many hospital claims, but the unanswered question was whether those claims were defensible. |
+| 19–36s | Zohair | Explain that you turned that direction into the working system: the Databricks trust layer, evidence scoring, maps, dossiers, resilience simulator, Copilot, and deployment. Pick three examples, not the entire list. |
+| 36–48s | Zamin | Explain how you shaped the project story and are turning the build into a clear judge experience through the three videos. Mention that the goal is to make the trust problem understandable in under a minute. |
+| 48–58s | Both | Share the Jaipur outage moment or one brief lesson, then close together with what CareProof represents: useful, honest, auditable planning intelligence. |
+
+### Natural closing idea
+
+“Zamin found the trust question. Zohair built the proof layer. Together, we made CareProof.” Treat this as a direction; change the wording until it sounds like both of you.
+
+If only Zamin can appear on camera, show a small on-screen card with Zohair’s name and implementation role while Zamin introduces the split accurately.
 
 ## Optional media shortlist
 
