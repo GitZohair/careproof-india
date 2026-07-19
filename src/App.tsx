@@ -10,6 +10,7 @@ import {
   BarChart3,
   Check,
   ChevronRight,
+  CircleOff,
   Compass,
   Database,
   FileCheck2,
@@ -23,9 +24,11 @@ import {
   Navigation,
   Play,
   Route,
+  RefreshCw,
   ScanSearch,
   Search,
   ShieldCheck,
+  ShieldAlert,
   Sparkles,
   Target,
   Workflow,
@@ -44,6 +47,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "./api";
+import { DEMO_MODE, LIVE_APP_URL } from "./runtime";
 import type {
   CapabilityBenchmark,
   FacilitySummary,
@@ -159,7 +163,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [demoOpen, setDemoOpen] = useState(() => new URLSearchParams(window.location.search).get("tour") === "1");
   const [introVisible, setIntroVisible] = useState(() => !introWasDismissed());
-  const [demoPlace, setDemoPlace] = useState<string | null>(null);
+  const [demoPlace, setDemoPlace] = useState<string | null>(() => new URLSearchParams(window.location.search).get("place"));
   const debouncedQuery = useDebouncedValue(query, 350);
 
   const filters = useQuery({ queryKey: ["filters"], queryFn: api.filters });
@@ -251,9 +255,10 @@ function App() {
           <button className={view === "health" ? "active" : ""} onClick={() => navigate("health")}>Data health</button>
           <button className={view === "methodology" ? "active" : ""} onClick={() => navigate("methodology")}>Method</button>
         </nav>
-        <div className="topbar-actions"><button className="demo-button" onClick={() => setDemoOpen(true)}><Play size={13} fill="currentColor" /> 60-sec demo</button><div className="topbar-context"><span className="live-dot" /> Live data</div></div>
+        <div className="topbar-actions"><button className="demo-button" onClick={() => setDemoOpen(true)}><Play size={13} fill="currentColor" /> 60-sec demo</button><div className="topbar-context"><span className="live-dot" /> {DEMO_MODE ? "Judge demo" : "Live data"}</div></div>
       </header>
 
+      {DEMO_MODE && <div className="public-demo-banner"><Info size={15} /><span><strong>Anonymous judge demo.</strong> Read-only catalog snapshot; the full product runs on Databricks.</span><a href={LIVE_APP_URL} target="_blank" rel="noreferrer">Open live workspace <ArrowUpRight size={13} /></a></div>}
       {introVisible && <IntroRibbon onOpen={() => setDemoOpen(true)} onDismiss={dismissIntro} />}
       {coreError && <div className="service-banner" role="alert"><AlertTriangle size={15} /><span>One or more live catalog views did not load.</span><button onClick={() => window.location.reload()}>Retry connection</button></div>}
 
@@ -422,12 +427,14 @@ function CardHeading({ eyebrow, title, icon, aside }: { eyebrow: string; title: 
   return <div className="card-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div><div className="card-heading-aside">{aside && <span>{aside}</span>}{icon}</div></div>;
 }
 
-function IndiaSignalMap({ points, loading, onSelect, origin, highlighted = [], showLens = false }: { points: MapPoint[]; loading?: boolean; onSelect: (id: string) => void; origin?: ResolvedLocation | null; highlighted?: string[]; showLens?: boolean }) {
+function IndiaSignalMap({ points, loading, onSelect, origin, highlighted = [], showLens = false, scenario }: { points: MapPoint[]; loading?: boolean; onSelect: (id: string) => void; origin?: ResolvedLocation | null; highlighted?: string[]; showLens?: boolean; scenario?: { primary?: NearestFacility | null; fallback?: NearestFacility | null; outage: boolean } }) {
   const projection = useMemo(() => geoMercator().center([82, 22]).scale(790).translate([400, 255]), []);
   const outline = INDIA_GEOGRAPHY ? geoPath(projection)(INDIA_GEOGRAPHY as never) : null;
   const highlightedIds = useMemo(() => new Set(highlighted), [highlighted]);
   const [mode, setMode] = useState<MapMode>(() => showLens && new URLSearchParams(window.location.search).get("map") === "location" ? "location" : "evidence");
   const locationLegend = ["VERIFIED", "PLAUSIBLE", "PIN_FALLBACK", "RAW_UNVERIFIED"];
+  const routeTarget = scenario?.outage ? scenario.fallback : scenario?.primary;
+  const routeCoordinates = origin && routeTarget?.longitude != null && routeTarget.latitude != null ? [projection([origin.longitude, origin.latitude]), projection([routeTarget.longitude, routeTarget.latitude])] : null;
   return (
     <div className="map-stage">
       {loading && <div className="map-loading"><span /><p>Mapping corrected coordinates…</p></div>}
@@ -436,12 +443,14 @@ function IndiaSignalMap({ points, loading, onSelect, origin, highlighted = [], s
         <defs><radialGradient id="mapGlow"><stop offset="0" stopColor="#d9ebe5" stopOpacity=".9" /><stop offset="1" stopColor="#eef3ef" stopOpacity="0" /></radialGradient></defs>
         <circle cx="400" cy="255" r="310" fill="url(#mapGlow)" />
         {outline && <path d={outline} className="india-outline" />}
+        {routeCoordinates?.[0] && routeCoordinates?.[1] && <line className={`access-route-line ${scenario?.outage ? "is-outage" : ""}`} x1={routeCoordinates[0][0]} y1={routeCoordinates[0][1]} x2={routeCoordinates[1][0]} y2={routeCoordinates[1][1]} />}
         {points.map((point) => {
           const projected = projection([point.longitude, point.latitude]);
           if (!projected) return null;
           const highlightedPoint = highlightedIds.has(point.facility_id);
           const locationLabel = LOCATION_LABELS[point.location_confidence] ?? "Unknown";
-          return <circle key={point.facility_id} cx={projected[0]} cy={projected[1]} r={highlightedPoint ? 6 : point.tier === "STRONG" ? 3.6 : 2.5} fill={mode === "location" ? LOCATION_COLORS[point.location_confidence] ?? LOCATION_COLORS.UNKNOWN : TIER_COLORS[point.tier]} fillOpacity={highlightedPoint ? 1 : .76} stroke={highlightedPoint ? "#fff" : "none"} strokeWidth={highlightedPoint ? 2.2 : 0} className="map-point" onClick={() => onSelect(point.facility_id)}><title>{point.name} · {mode === "location" ? locationLabel : `${point.evidence_strength}/100 · ${TIER_LABEL[point.tier]}`}</title></circle>;
+          const simulatedOutage = scenario?.outage && point.facility_id === scenario.primary?.facility_id;
+          return <circle key={point.facility_id} cx={projected[0]} cy={projected[1]} r={highlightedPoint ? 6 : point.tier === "STRONG" ? 3.6 : 2.5} fill={simulatedOutage ? TIER_COLORS.NEEDS_REVIEW : mode === "location" ? LOCATION_COLORS[point.location_confidence] ?? LOCATION_COLORS.UNKNOWN : TIER_COLORS[point.tier]} fillOpacity={simulatedOutage ? .32 : highlightedPoint ? 1 : .76} stroke={highlightedPoint ? "#fff" : "none"} strokeWidth={highlightedPoint ? 2.2 : 0} className={`map-point ${simulatedOutage ? "map-point--outage" : ""}`} onClick={() => onSelect(point.facility_id)}><title>{point.name} · {simulatedOutage ? "simulated unavailable" : mode === "location" ? locationLabel : `${point.evidence_strength}/100 · ${TIER_LABEL[point.tier]}`}</title></circle>;
         })}
         {origin && (() => {
           const projected = projection([origin.longitude, origin.latitude]);
@@ -489,10 +498,36 @@ function FacilityCard({ facility, rank, onSelect }: { facility: FacilitySummary;
   return <button className="facility-card" onClick={onSelect}><div className="facility-card-top"><span>{String(rank).padStart(2, "0")}</span><TierBadge tier={facility.tier} /></div><h3>{facility.name}</h3><p><MapPin size={12} />{[facility.city, facility.state].filter(Boolean).join(", ")}</p><div className="facility-card-score"><strong>{facility.evidence_strength}</strong><span>/100</span><small>{facility.facet_count} facets · {facility.source_domain_count} domains</small></div></button>;
 }
 
+function ResilienceSimulator({ origin, capability, facilities, radius, outage, onRadius, onOutage, onInspect }: { origin: ResolvedLocation; capability: string; facilities: NearestFacility[]; radius: number; outage: boolean; onRadius: (radius: number) => void; onOutage: (outage: boolean) => void; onInspect: (id: string) => void }) {
+  const withinRadius = facilities.filter((item) => item.distance_km <= radius);
+  const defensible = withinRadius.filter((item) => item.tier === "STRONG" || item.tier === "MODERATE");
+  const primary = defensible[0] ?? null;
+  const fallback = facilities.find((item) => item.facility_id !== primary?.facility_id && (item.tier === "STRONG" || item.tier === "MODERATE")) ?? null;
+  const remainingInRadius = outage ? defensible.filter((item) => item.facility_id !== primary?.facility_id).length : defensible.length;
+  const candidate = withinRadius.filter((item) => item.tier === "WEAK" || item.tier === "NEEDS_REVIEW").sort((left, right) => right.evidence_strength - left.evidence_strength || left.distance_km - right.distance_km)[0] ?? null;
+  const status = outage
+    ? remainingInRadius >= 2 ? "Resilience retained" : remainingInRadius === 1 ? "One fallback remains" : "Catchment exposed"
+    : defensible.length >= 3 ? "Resilient catchment" : defensible.length === 2 ? "Limited redundancy" : defensible.length === 1 ? "Single-point exposure" : "No defensible option";
+  const fallbackDelta = primary && fallback ? Math.max(0, Number((fallback.distance_km - primary.distance_km).toFixed(1))) : null;
+
+  return <section className={`resilience-card ${outage ? "is-outage" : ""}`} aria-label={`${capability} catchment resilience scenario`}>
+    <div className="resilience-heading"><div><p className="eyebrow">Evidence resilience simulator</p><h2>What if the nearest defensible {capability} claim cannot be used?</h2></div><div className="radius-control" aria-label="Catchment radius">{[10, 25, 50].map((value) => <button key={value} aria-pressed={radius === value} onClick={() => onRadius(value)}>{value} km</button>)}</div></div>
+    <div className="resilience-path">
+      <article><span>Origin</span><strong>{origin.label}</strong><small>{withinRadius.length} mapped claims within {radius} km</small></article><ArrowRight size={16} />
+      <article className={outage ? "is-disabled" : ""}><span>Nearest defensible</span><strong>{primary?.name ?? "None found"}</strong><small>{primary ? `${primary.distance_km} km · ${TIER_LABEL[primary.tier]}` : "No strong or moderate evidence"}</small>{outage && <i><CircleOff size={12} /> Simulated unavailable</i>}</article><ArrowRight size={16} />
+      <article className={outage && fallback ? "is-active" : ""}><span>Fallback</span><strong>{fallback?.name ?? "No defensible fallback"}</strong><small>{fallback ? `${fallback.distance_km} km · ${fallback.distance_km <= radius ? "inside" : "outside"} catchment` : "Field verification is required"}</small></article>
+    </div>
+    <aside className="resilience-verdict"><span className={`resilience-status resilience-status--${remainingInRadius === 0 ? "risk" : remainingInRadius === 1 ? "limited" : "ready"}`}><ShieldAlert size={14} />{status}</span><strong>{remainingInRadius}</strong><p>defensible option{remainingInRadius === 1 ? "" : "s"} {outage ? "remain" : "found"} within {radius} km</p>{outage && fallbackDelta != null && <small>Fallback adds {fallbackDelta} km</small>}<button className="scenario-button" disabled={!primary} onClick={() => onOutage(!outage)}>{outage ? <><RefreshCw size={14} /> Reset scenario</> : <><CircleOff size={14} /> Simulate outage</>}</button>{candidate && <button className="candidate-button" onClick={() => onInspect(candidate.facility_id)}>Inspect next verification target <ArrowRight size={13} /></button>}</aside>
+    <p className="resilience-note">Planning scenario only. It models evidenced alternatives—not live beds, staffing, or admission probability.</p>
+  </section>;
+}
+
 function AccessFinder({ capability, state, capabilities, states, points, initialPlace, onInitialPlaceUsed, onCapability, onState, onSelect }: ControlProps & { points: MapPoint[]; initialPlace?: string | null; onInitialPlaceUsed: () => void; onSelect: (id: string) => void }) {
   const [locationQuery, setLocationQuery] = useState("");
   const [origin, setOrigin] = useState<ResolvedLocation | null>(null);
   const [locationError, setLocationError] = useState("");
+  const [radius, setRadius] = useState(25);
+  const [outage, setOutage] = useState(() => new URLSearchParams(window.location.search).get("outage") === "1");
   const handledInitial = useRef<string | null>(null);
   const resolver = useMutation({
     mutationFn: api.resolveLocation,
@@ -512,7 +547,7 @@ function AccessFinder({ capability, state, capabilities, states, points, initial
       onInitialPlaceUsed();
     }
   }, [initialPlace, onInitialPlaceUsed, resolver]);
-  const nearestPoints = useMemo(() => (nearest.data ?? []).filter((item) => item.latitude != null && item.longitude != null), [nearest.data]);
+  const nearestPoints = useMemo(() => (nearest.data ?? []).slice(0, 20).filter((item) => item.latitude != null && item.longitude != null), [nearest.data]);
   const bestEvidencedNearby = useMemo(() => (nearest.data ?? [])
     .filter((item) => item.distance_km <= 25 && (item.tier === "STRONG" || item.tier === "MODERATE"))
     .sort((left, right) => right.evidence_strength - left.evidence_strength || left.distance_km - right.distance_km)[0]?.facility_id ?? null, [nearest.data]);
@@ -521,6 +556,18 @@ function AccessFinder({ capability, state, capabilities, states, points, initial
     nearestPoints.forEach((item) => merged.set(item.facility_id, item as MapPoint));
     return [...merged.values()];
   }, [points, nearestPoints]);
+  const defensibleWithinRadius = useMemo(() => (nearest.data ?? []).filter((item) => item.distance_km <= radius && (item.tier === "STRONG" || item.tier === "MODERATE")), [nearest.data, radius]);
+  const scenarioPrimary = defensibleWithinRadius[0] ?? null;
+  const scenarioFallback = useMemo(() => (nearest.data ?? []).find((item) => item.facility_id !== scenarioPrimary?.facility_id && (item.tier === "STRONG" || item.tier === "MODERATE")) ?? null, [nearest.data, scenarioPrimary]);
+
+  useEffect(() => { setOutage(new URLSearchParams(window.location.search).get("outage") === "1"); }, [capability, origin?.latitude, origin?.longitude]);
+
+  const updateOutage = (next: boolean) => {
+    setOutage(next);
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("outage", "1"); else url.searchParams.delete("outage");
+    window.history.replaceState(window.history.state, "", url);
+  };
 
   const useMyLocation = () => {
     if (!navigator.geolocation) { setLocationError("This browser does not expose geolocation."); return; }
@@ -544,16 +591,17 @@ function AccessFinder({ capability, state, capabilities, states, points, initial
       <section className="locator-card">
         <div><p className="eyebrow">Set an origin</p><h2>City, district or 6-digit PIN</h2></div>
         <div className="locator-input"><Search size={17} /><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && locationQuery.trim().length >= 2) resolver.mutate(locationQuery.trim()); }} placeholder="Try Jaipur or 302001" aria-label="City, district or PIN" /><button disabled={locationQuery.trim().length < 2 || resolver.isPending} onClick={() => resolver.mutate(locationQuery.trim())}>{resolver.isPending ? "Locating…" : "Find"}</button></div>
-        <button className="location-button" onClick={useMyLocation}><LocateFixed size={16} /> Use my location</button>
+        <button className="location-button" onClick={useMyLocation} disabled={DEMO_MODE}><LocateFixed size={16} /> {DEMO_MODE ? "Live workspace only" : "Use my location"}</button>
         <div className="location-presets"><span>Quick scenarios</span>{["Jaipur", "Pune", "Lucknow"].map((place) => <button key={place} onClick={() => resolvePlace(place)} disabled={resolver.isPending}>{place}</button>)}</div>
         {origin && <div className="origin-chip"><Navigation size={14} /><span><strong>{origin.label}</strong>{[origin.district, origin.state].filter(Boolean).join(", ") && ` · ${[origin.district, origin.state].filter(Boolean).join(", ")}`}</span></div>}
         {locationError && <p className="locator-error">{locationError}</p>}
       </section>
+      {origin && !nearest.isLoading && nearest.data && <ResilienceSimulator origin={origin} capability={capability} facilities={nearest.data} radius={radius} outage={outage} onRadius={setRadius} onOutage={updateOutage} onInspect={onSelect} />}
       <section className="access-grid">
-        <article className="map-card access-map"><CardHeading eyebrow="Access radius" title={origin ? `From ${origin.label}` : "Choose an origin to rank distance"} icon={<Compass size={18} />} aside={`${nearestPoints.length} nearest shown`} /><IndiaSignalMap points={mapData} origin={origin} highlighted={nearestPoints.map((item) => item.facility_id)} onSelect={onSelect} /></article>
+        <article className="map-card access-map"><CardHeading eyebrow="Access radius" title={origin ? `From ${origin.label}` : "Choose an origin to rank distance"} icon={<Compass size={18} />} aside={`${nearestPoints.length} nearest mapped`} /><IndiaSignalMap points={mapData} origin={origin} highlighted={[scenarioPrimary?.facility_id, scenarioFallback?.facility_id].filter((item): item is string => Boolean(item))} scenario={{ primary: scenarioPrimary, fallback: scenarioFallback, outage }} onSelect={onSelect} /></article>
         <article className="nearest-panel">
           <CardHeading eyebrow="Nearest claims" title={`${capability} facilities`} icon={<Navigation size={18} />} />
-          {!origin ? <div className="nearest-empty"><MapPin size={25} /><h3>Start with a place</h3><p>We rank corrected coordinates by distance, then show the evidence tier beside each result.</p></div> : nearest.isLoading ? <SkeletonRows /> : <div className="nearest-list">{nearest.data?.map((facility, index) => <NearestRow facility={facility} rank={index + 1} tag={facility.facility_id === bestEvidencedNearby ? "Best evidence ≤25 km" : index === 0 ? "Nearest" : undefined} key={facility.facility_id} onSelect={() => onSelect(facility.facility_id)} />)}</div>}
+          {!origin ? <div className="nearest-empty"><MapPin size={25} /><h3>Start with a place</h3><p>We rank corrected coordinates by distance, then show the evidence tier beside each result.</p></div> : nearest.isLoading ? <SkeletonRows /> : <div className="nearest-list">{nearest.data?.slice(0, 8).map((facility, index) => <NearestRow facility={facility} rank={index + 1} tag={facility.facility_id === bestEvidencedNearby ? "Best evidence ≤25 km" : index === 0 ? "Nearest" : undefined} key={facility.facility_id} onSelect={() => onSelect(facility.facility_id)} />)}</div>}
           <div className="access-warning"><AlertTriangle size={15} /><span>Nearest does not mean clinically suitable or currently available. Verify before programme referral.</span></div>
         </article>
       </section>
@@ -616,10 +664,11 @@ function ReviewForm({ facilityId, capability, onCancel, onSaved }: { facilityId:
 
 function DataHealthView() {
   const health = useQuery({ queryKey: ["data-health"], queryFn: api.dataHealth });
+  const evaluation = useQuery({ queryKey: ["evaluation"], queryFn: api.evaluation, retry: false });
   if (health.isLoading) return <main className="subpage"><SkeletonRows /></main>;
   if (!health.data) return <main className="subpage"><div className="empty-state"><AlertTriangle /><h3>Health profile unavailable</h3></div></main>;
   const data = health.data;
-  return <main className="subpage"><PageLead eyebrow="Dataset health" title="Know the blind spots before making the map." badge="Shared catalog · live profile" /><section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state variants" value={data.raw_state_values} tone="warning" hint="before normalization" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="Verified / plausible locations" value={`${data.verified_location_rate}%`} /></section><section className="health-layout"><article className="health-card"><CardHeading eyebrow="Completeness" title="Coverage by evidence field" icon={<Database size={19} />} /><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article><article className="health-card"><CardHeading eyebrow="Claim pressure" title="Claims with multi-facet support" icon={<Hospital size={19} />} /><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" />Claimed</span><span><i className="supported" />Supported by 2+ facets</span></div></article></section></main>;
+  return <main className="subpage"><PageLead eyebrow="Dataset health" title="Know the blind spots before making the map." badge="Shared catalog · live profile" /><section className="metrics-grid health-metrics"><Metric label="Facility records" value={data.total_records.toLocaleString()} /><Metric label="Canonical facilities" value={data.unique_facilities.toLocaleString()} /><Metric label="Raw state variants" value={data.raw_state_values} tone="warning" hint="before normalization" /><Metric label="Coordinate conflicts" value={data.coordinate_conflicts.toLocaleString()} tone="review" /><Metric label="Verified / plausible locations" value={`${data.verified_location_rate}%`} /></section><section className="health-layout"><article className="health-card"><CardHeading eyebrow="Completeness" title="Coverage by evidence field" icon={<Database size={19} />} /><div className="coverage-bars">{data.coverage.map((item) => <div key={item.field}><span>{item.field}</span><div><i style={{ width: `${item.value}%` }} /></div><b>{item.value}%</b></div>)}</div></article><article className="health-card"><CardHeading eyebrow="Claim pressure" title="Claims with multi-facet support" icon={<Hospital size={19} />} /><ResponsiveContainer width="100%" height={330}><BarChart data={data.capability_evidence} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#dbe3df" /><XAxis dataKey="capability" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="claimed" fill="#b8c6c0" radius={[4, 4, 0, 0]} /><Bar dataKey="supported" fill="#176f68" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer><div className="chart-legend"><span><i className="claim" />Claimed</span><span><i className="supported" />Supported by 2+ facets</span></div></article></section>{evaluation.data && <section className="evaluation-card"><div className="evaluation-heading"><div><p className="eyebrow">MLflow release evaluation</p><h2>Trust-layer quality gate</h2></div><span className={evaluation.data.status === "PASS" ? "is-pass" : "is-fail"}><ShieldCheck size={15} />{evaluation.data.status} · {evaluation.data.checks.filter((item) => item.passed).length}/{evaluation.data.checks.length} checks</span></div><div className="evaluation-checks">{evaluation.data.checks.map((item) => <article key={item.name}><Check size={14} /><div><strong>{item.label}</strong><small>{item.detail}</small></div><b>{item.value.toLocaleString()}</b></article>)}</div><footer><span>{evaluation.data.profiles_evaluated.toLocaleString()} profiles · {evaluation.data.score_version} · {new Date(evaluation.data.evaluated_at).toLocaleDateString()}</span>{evaluation.data.mlflow_run_url && <a href={evaluation.data.mlflow_run_url} target="_blank" rel="noreferrer">Open MLflow run <ArrowUpRight size={13} /></a>}</footer></section>}</main>;
 }
 
 function MethodologyView() {

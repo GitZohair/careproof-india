@@ -6,7 +6,11 @@ Evidence-first healthcare facility intelligence for public-health and NGO planne
 
 CareProof targets the **Facility Trust Desk** track: *“Can this facility actually do what it claims?”* We chose it because the source dataset contains thousands of useful but inconsistent facility descriptions, where a listed capability such as ICU or trauma care is not the same as verified proof. In plain language, CareProof turns those claims into an evidence traffic light, shows the source sentences behind each score, flags what is uncertain, and lets a planner record a human decision. It supports planning and verification; it does not recommend treatment to patients.
 
-**Live app:** [careproof-india-7474646705493946.aws.databricksapps.com](https://careproof-india-7474646705493946.aws.databricksapps.com)
+**Submission / anonymous judge demo:** [gitzohair.github.io/careproof-india](https://gitzohair.github.io/careproof-india/)
+
+**Full Databricks app:** [careproof-india-7474646705493946.aws.databricksapps.com](https://careproof-india-7474646705493946.aws.databricksapps.com)
+
+The public link is a read-only snapshot of marketplace data and requires no sign-in. The full application queries Unity Catalog live and persists planner decisions in Lakebase.
 
 CareProof converts noisy facility listings into auditable capability profiles. It maps the evidence behind ICU, NICU, emergency, maternity, oncology, and trauma claims; exposes geographic coverage gaps; and preserves human review decisions.
 
@@ -15,8 +19,9 @@ CareProof converts noisy facility listings into auditable capability profiles. I
 1. Open the live app and choose **60-sec demo**.
 2. Run the prebuilt **Jaipur scenario**.
 3. Compare the nearest facility with the best-evidenced option within 25 km.
-4. Open a dossier to inspect score components, sentence receipts, gaps, and source links.
-5. Visit **Data health** to see live-derived quality metrics, then **Method** for the transparent scoring model.
+4. Run the **Evidence Resilience Simulator** to remove the nearest defensible option and inspect the fallback.
+5. Open a dossier to inspect score components, sentence receipts, gaps, and source links.
+6. Visit **Data health** to see the MLflow release gate, then **Method** for the transparent scoring model.
 
 The complete path is intentionally deterministic and auditable; it does not use a language model to invent a facility recommendation.
 
@@ -28,8 +33,10 @@ The complete path is intentionally deterministic and auditable; it does not use 
 - Benchmarks evidence readiness across all six care capabilities.
 - Surfaces districts with the largest number of uncorroborated profiles.
 - Finds the nearest evidenced capability claims from a city, district, PIN, or browser location.
+- Simulates a facility outage and measures evidence-aware catchment redundancy and fallback distance.
 - Opens a facility dossier with score components, sentence-level receipts, flags, gaps, and sources.
 - Saves planner decisions to Databricks Lakebase.
+- Logs deterministic trust-layer release checks to MLflow and exposes the latest quality gate.
 
 The access finder is planning intelligence—not patient referral advice. Distance does not establish clinical suitability, current capacity, or availability.
 

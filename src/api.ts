@@ -1,4 +1,6 @@
-import type { CapabilityBenchmark, DataHealth, FacilityDetail, FacilitySummary, Filters, MapPoint, NearestFacility, RegionSummary, ResolvedLocation, ReviewDecision, Summary } from "./types";
+import type { CapabilityBenchmark, DataHealth, EvaluationReport, FacilityDetail, FacilitySummary, Filters, MapPoint, NearestFacility, RegionSummary, ResolvedLocation, ReviewDecision, Summary } from "./types";
+import { demoApi } from "./demo-api";
+import { DEMO_MODE } from "./runtime";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -15,7 +17,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export const api = {
+const liveApi = {
   filters: () => request<Filters>("/api/filters"),
   summary: (capability: string, state: string) =>
     request<Summary>(`/api/summary?capability=${encodeURIComponent(capability)}&state=${encodeURIComponent(state)}`),
@@ -38,4 +40,7 @@ export const api = {
   review: (payload: Omit<ReviewDecision, "id">) =>
     request<ReviewDecision>("/api/reviews", { method: "POST", body: JSON.stringify(payload) }),
   dataHealth: () => request<DataHealth>("/api/data-health"),
+  evaluation: () => request<EvaluationReport>("/api/evaluation"),
 };
+
+export const api = DEMO_MODE ? demoApi : liveApi;

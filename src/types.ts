@@ -28,6 +28,12 @@ export interface FacilitySummary {
   longitude: number | null;
   flags: string[];
   review_status: string | null;
+  component_direct?: number;
+  component_equipment?: number;
+  component_staff?: number;
+  component_capacity?: number;
+  component_procedure?: number;
+  component_sources?: number;
 }
 
 export interface MapPoint {
@@ -130,4 +136,14 @@ export interface DataHealth {
   verified_location_rate: number;
   coverage: { field: string; value: number }[];
   capability_evidence: { capability: string; claimed: number; supported: number }[];
+}
+
+export interface EvaluationReport {
+  status: "PASS" | "FAIL";
+  score_version: string;
+  evaluated_at: string;
+  mlflow_run_id: string | null;
+  mlflow_run_url: string | null;
+  profiles_evaluated: number;
+  checks: { name: string; label: string; passed: boolean; value: number; detail: string }[];
 }

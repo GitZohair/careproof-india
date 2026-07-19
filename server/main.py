@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -123,7 +124,9 @@ def _facility_rows(capability: str, state: str, tier: str, query: str) -> list[d
         f"""
         SELECT facility_id, name, city, canonical_state AS state, canonical_district AS district,
                capability, claimed, evidence_strength, tier, facet_count, source_domain_count,
-               location_confidence, canonical_latitude AS latitude, canonical_longitude AS longitude, flags
+               location_confidence, canonical_latitude AS latitude, canonical_longitude AS longitude, flags,
+               component_direct, component_equipment, component_staff, component_capacity,
+               component_procedure, component_sources
         FROM {settings.trust_table}
         WHERE capability=:capability
           AND (:state='ALL' OR canonical_state=:state)
@@ -287,6 +290,8 @@ def nearest_facilities(
                  canonical_district AS district, capability, evidence_strength, tier,
                  facet_count, source_domain_count, location_confidence,
                  canonical_latitude AS latitude, canonical_longitude AS longitude, flags,
+                 component_direct, component_equipment, component_staff, component_capacity,
+                 component_procedure, component_sources,
                  6371 * 2 * ASIN(SQRT(
                    POWER(SIN(RADIANS(canonical_latitude - :latitude) / 2), 2)
                    + COS(RADIANS(:latitude)) * COS(RADIANS(canonical_latitude))
@@ -300,10 +305,12 @@ def nearest_facilities(
         SELECT facility_id, name, city, state, district, capability,
                evidence_strength, tier, facet_count, source_domain_count,
                location_confidence, latitude, longitude, flags,
+               component_direct, component_equipment, component_staff, component_capacity,
+               component_procedure, component_sources,
                ROUND(distance_km_raw, 1) AS distance_km
         FROM distances
         ORDER BY distance_km_raw ASC, evidence_strength DESC
-        LIMIT 8
+        LIMIT 40
         """,
         {"capability": capability, "latitude": latitude, "longitude": longitude},
     )
@@ -384,6 +391,14 @@ def create_review(payload: ReviewCreate, request: Request) -> dict[str, Any]:
 @app.get("/api/data-health")
 def data_health() -> dict[str, Any]:
     return _data_health()
+
+
+@app.get("/api/evaluation")
+def evaluation_report() -> dict[str, Any]:
+    report_path = Path(__file__).with_name("evaluation_latest.json")
+    if not report_path.exists():
+        raise HTTPException(status_code=503, detail="Evaluation report has not been generated")
+    return json.loads(report_path.read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)

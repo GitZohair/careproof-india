@@ -1,0 +1,66 @@
+{
+  "status": "PASS",
+  "score_version": "v1.0",
+  "evaluated_at": "2026-07-19T10:24:36.943167+00:00",
+  "mlflow_run_id": "69b6c4335e9a43bbae35bea0b2448d24",
+  "mlflow_run_url": "https://dbc-7cac7afd-37f3.cloud.databricks.com/ml/experiments/3045713827976587/runs/69b6c4335e9a43bbae35bea0b2448d24",
+  "profiles_evaluated": 26174,
+  "checks": [
+    {
+      "name": "score_range",
+      "label": "Score range",
+      "passed": true,
+      "value": 0,
+      "detail": "scores outside 0\u2013100"
+    },
+    {
+      "name": "score_components",
+      "label": "Component reconciliation",
+      "passed": true,
+      "value": 0,
+      "detail": "score/component mismatches"
+    },
+    {
+      "name": "tier_rules",
+      "label": "Tier rule consistency",
+      "passed": true,
+      "value": 0,
+      "detail": "tier assignment mismatches"
+    },
+    {
+      "name": "state_domain",
+      "label": "Canonical state domain",
+      "passed": true,
+      "value": 0,
+      "detail": "invalid Indian state labels"
+    },
+    {
+      "name": "coordinate_bounds",
+      "label": "Coordinate bounds",
+      "passed": true,
+      "value": 0,
+      "detail": "mapped coordinates outside India bounds"
+    },
+    {
+      "name": "location_labels",
+      "label": "Location confidence domain",
+      "passed": true,
+      "value": 0,
+      "detail": "unknown confidence labels"
+    },
+    {
+      "name": "receipt_links",
+      "label": "Evidence receipt linkage",
+      "passed": true,
+      "value": 0,
+      "detail": "receipts without a trust profile"
+    },
+    {
+      "name": "claim_support",
+      "label": "Claim support invariant",
+      "passed": true,
+      "value": 0,
+      "detail": "capabilities where supported exceeds claimed"
+    }
+  ]
+}
