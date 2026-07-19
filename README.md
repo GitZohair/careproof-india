@@ -12,7 +12,7 @@ CareProof targets the **Facility Trust Desk** track: *“Can this facility actua
 
 The public link is a read-only snapshot of marketplace data and requires no sign-in. The full application queries Unity Catalog live and persists planner decisions in Lakebase.
 
-CareProof converts noisy facility listings into auditable capability profiles. It maps the evidence behind ICU, NICU, emergency, maternity, oncology, and trauma claims; exposes geographic coverage gaps; and preserves human review decisions.
+CareProof converts noisy facility listings into auditable capability profiles. It maps the evidence behind ICU, NICU, emergency, maternity, oncology, and trauma claims; exposes geographic coverage gaps; and preserves human review decisions. Its free, dossier-grounded **Evidence Copilot** answers template or typed questions from the visible receipts, gaps, flags, and score fields—without an external model or clinical advice.
 
 ## Judge quick start
 
@@ -20,8 +20,9 @@ CareProof converts noisy facility listings into auditable capability profiles. I
 2. Run the prebuilt **Jaipur scenario**.
 3. Compare the nearest facility with the best-evidenced option within 25 km.
 4. Run the **Evidence Resilience Simulator** to remove the nearest defensible option and inspect the fallback.
-5. Open a dossier to inspect score components, sentence receipts, gaps, and source links.
-6. Visit **Data health** to see the MLflow release gate, then **Method** for the transparent scoring model.
+5. Open a dossier and try an **Evidence Copilot** template question, then inspect its cited receipts.
+6. Review the score components, gaps, and source links behind the answer.
+7. Visit **Data health** to see the MLflow release gate, then **Method** for the transparent scoring model.
 
 The complete path is intentionally deterministic and auditable; it does not use a language model to invent a facility recommendation.
 
